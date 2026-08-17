@@ -1,0 +1,25 @@
+# deps
+node_modules/
+.venv/
+
+# secrets & local config
+.env
+.env.local
+
+# runtime artifacts (jobs, cache, temp, logs)
+runtime/
+
+# render output
+out/
+
+# per-job assets staged into the Remotion bundle at render time
+public/jobs/
+
+# media assets added manually (licensing varies) - keep dirs via .gitkeep
+assets/music/*
+assets/sfx/*
+!assets/**/.gitkeep
+
+# os / editor
+.DS_Store
+*.log

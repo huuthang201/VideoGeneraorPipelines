@@ -1,0 +1,158 @@
+{
+  "version": "1.0",
+  "projectId": "fixture-sample",
+  "video": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "durationInFrames": 450
+  },
+  "style": "tiktok-fast",
+  "voice": null,
+  "music": null,
+  "scenes": [
+    {
+      "id": "scene-01",
+      "type": "hook",
+      "from": 0,
+      "durationInFrames": 90,
+      "headline": "Tai nghe dưới 400K?",
+      "image": {
+        "src": "test-images/portrait.jpg",
+        "width": 1080,
+        "height": 1920,
+        "fit": "cover"
+      },
+      "animation": "zoom-in",
+      "transition": "cut",
+      "captionPages": [
+        {
+          "text": "Tai nghe này",
+          "startMs": 200,
+          "durationMs": 1100,
+          "tokens": [
+            { "text": "Tai", "fromMs": 200, "toMs": 560 },
+            { "text": "nghe", "fromMs": 560, "toMs": 930 },
+            { "text": "này", "fromMs": 930, "toMs": 1300 }
+          ]
+        },
+        {
+          "text": "có đáng mua?",
+          "startMs": 1400,
+          "durationMs": 1300,
+          "tokens": [
+            { "text": "có", "fromMs": 1400, "toMs": 1750 },
+            { "text": "đáng", "fromMs": 1750, "toMs": 2180 },
+            { "text": "mua?", "fromMs": 2180, "toMs": 2700 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene-02",
+      "type": "product",
+      "from": 90,
+      "durationInFrames": 120,
+      "headline": "Thiết kế nhỏ gọn",
+      "image": {
+        "src": "test-images/landscape.jpg",
+        "width": 1600,
+        "height": 1200,
+        "fit": "blur-pad"
+      },
+      "animation": "pan-left",
+      "transition": "slide",
+      "captionPages": [
+        {
+          "text": "Thiết kế nhỏ gọn",
+          "startMs": 150,
+          "durationMs": 1700,
+          "tokens": [
+            { "text": "Thiết", "fromMs": 150, "toMs": 560 },
+            { "text": "kế", "fromMs": 560, "toMs": 880 },
+            { "text": "nhỏ", "fromMs": 880, "toMs": 1330 },
+            { "text": "gọn", "fromMs": 1330, "toMs": 1850 }
+          ]
+        },
+        {
+          "text": "dễ mang theo",
+          "startMs": 2000,
+          "durationMs": 1600,
+          "tokens": [
+            { "text": "dễ", "fromMs": 2000, "toMs": 2400 },
+            { "text": "mang", "fromMs": 2400, "toMs": 2950 },
+            { "text": "theo", "fromMs": 2950, "toMs": 3600 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene-03",
+      "type": "feature",
+      "from": 210,
+      "durationInFrames": 150,
+      "headline": "Chống ồn ANC",
+      "image": {
+        "src": "test-images/square.jpg",
+        "width": 1400,
+        "height": 1400,
+        "fit": "blur-pad"
+      },
+      "animation": "zoom-out",
+      "transition": "fade",
+      "captionPages": [
+        {
+          "text": "Có chống ồn ANC",
+          "startMs": 200,
+          "durationMs": 2100,
+          "tokens": [
+            { "text": "Có", "fromMs": 200, "toMs": 620 },
+            { "text": "chống", "fromMs": 620, "toMs": 1120 },
+            { "text": "ồn", "fromMs": 1120, "toMs": 1600 },
+            { "text": "ANC", "fromMs": 1600, "toMs": 2300 }
+          ]
+        },
+        {
+          "text": "nghe rõ hơn hẳn",
+          "startMs": 2500,
+          "durationMs": 2100,
+          "tokens": [
+            { "text": "nghe", "fromMs": 2500, "toMs": 2950 },
+            { "text": "rõ", "fromMs": 2950, "toMs": 3350 },
+            { "text": "hơn", "fromMs": 3350, "toMs": 3900 },
+            { "text": "hẳn", "fromMs": 3900, "toMs": 4600 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene-04",
+      "type": "cta",
+      "from": 360,
+      "durationInFrames": 90,
+      "headline": "Xem link bên dưới",
+      "image": {
+        "src": "test-images/portrait.jpg",
+        "width": 1080,
+        "height": 1920,
+        "fit": "cover"
+      },
+      "animation": "spring",
+      "transition": "whoosh",
+      "captionPages": [
+        {
+          "text": "Xem link bên dưới nhé",
+          "startMs": 250,
+          "durationMs": 2300,
+          "tokens": [
+            { "text": "Xem", "fromMs": 250, "toMs": 660 },
+            { "text": "link", "fromMs": 660, "toMs": 1080 },
+            { "text": "bên", "fromMs": 1080, "toMs": 1500 },
+            { "text": "dưới", "fromMs": 1500, "toMs": 2000 },
+            { "text": "nhé", "fromMs": 2000, "toMs": 2550 }
+          ]
+        }
+      ]
+    }
+  ]
+}
