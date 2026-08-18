@@ -47,8 +47,13 @@ export class EdgeTTSProvider implements TTSProvider {
 
     const script = path.join(process.cwd(), 'scripts', 'edge_tts_synth.py');
     const args = [script, '--text-file', textPath, '--voice', input.voice, '--out', audioPath];
-    if (input.rate) args.push('--rate', input.rate);
-    if (input.pitch) args.push('--pitch', input.pitch);
+
+    // `--pitch=-10Hz`, not `--pitch -10Hz`. Passed as two arguments, argparse
+    // reads a leading minus as the start of another option and rejects the
+    // call, which made every negative value - that is, every deeper or slower
+    // delivery - impossible to request.
+    if (input.rate) args.push(`--rate=${input.rate}`);
+    if (input.pitch) args.push(`--pitch=${input.pitch}`);
 
     let result;
     try {
