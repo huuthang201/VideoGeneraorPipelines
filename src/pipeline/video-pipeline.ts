@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdir, readFile, writeFile, access, cp } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access, cp, rm } from 'node:fs/promises';
 import {
   StoryboardSchema,
   narrationFromScenes,
@@ -292,6 +292,11 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       // state rather than whatever it held mid-render (spec §46).
       await cp(paths.jobJson, path.join(paths.output, 'job.json'));
 
+      // A project that failed once and has now succeeded must not keep an
+      // error file sitting in 99_ERROR. CLAUDE.md tells the Drive layer to read
+      // that folder, so a stale entry would report a healthy project as broken.
+      await clearErrorFile(config, projectId);
+
       logger.done(`Done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s → ${paths.output}`);
       return { status: 'completed', mode, job, paths, timeline };
     } finally {
@@ -503,6 +508,11 @@ async function writeErrorFile(
     `${JSON.stringify(error.toErrorFile(projectId), null, 2)}\n`,
     'utf8',
   ).catch(() => {});
+}
+
+async function clearErrorFile(config: AppConfig, projectId: string): Promise<void> {
+  const dir = path.join(config.driveRoot, '99_ERROR', projectId);
+  await rm(dir, { recursive: true, force: true }).catch(() => {});
 }
 
 async function exists(filePath: string): Promise<boolean> {

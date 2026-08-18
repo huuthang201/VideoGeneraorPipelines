@@ -1,7 +1,0 @@
-{
-  "projectId": "ai-test",
-  "stage": "generate-storyboard",
-  "code": "AI_CALL_FAILED",
-  "message": "Could not run \"claude\": claude timed out after 240000ms",
-  "timestamp": "2026-08-17T20:38:17.068Z"
-}

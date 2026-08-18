@@ -17,7 +17,13 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "setup:python": "bash scripts/setup-python.sh"
+    "setup:python": "bash scripts/setup-python.sh",
+    "prepare:project": "tsx src/cli/index.ts prepare",
+    "generate": "tsx src/cli/index.ts generate",
+    "generate-all": "tsx src/cli/index.ts generate-all",
+    "render": "tsx src/cli/index.ts render",
+    "regenerate": "tsx src/cli/index.ts regenerate-content",
+    "check": "tsx src/cli/index.ts validate"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.512",

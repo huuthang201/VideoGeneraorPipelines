@@ -1,7 +1,0 @@
-{
-  "projectId": "baseus-ma10",
-  "stage": "generate-storyboard",
-  "code": "INVALID_STORYBOARD",
-  "message": "storyboard.json is invalid:\n  content.narration: Too small: expected string to have >=1 characters",
-  "timestamp": "2026-08-17T18:45:16.074Z"
-}
