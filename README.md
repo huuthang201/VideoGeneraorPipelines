@@ -33,11 +33,23 @@ npm run tts:voices
 
 Male, Northern, narration-style presets — closest to a deep "Adam" read:
 
-| Voice | Style |
-|---|---|
-| `Thanh Bình` | storytelling (default) |
-| `Minh Đức` | news, firm |
-| `Phạm Tuyên` | natural |
+Ranked by measured median pitch — lower is deeper. Worth checking the number
+rather than the style label: the deepest-sounding name is not the deepest voice.
+
+| Voice | Pitch | Region | Style |
+|---|---|---|---|
+| `Đức Trí` | 100 Hz | Southern | storytelling |
+| `Phạm Tuyên` | 108 Hz | Northern | natural |
+| `Xuân Vĩnh` | 123 Hz | Southern | natural |
+| `Thái Sơn` | 128 Hz | Southern | storytelling |
+| `Quang Sơn` | 135 Hz | Central | natural |
+| `Thanh Bình` | 151 Hz | Northern | storytelling (default) |
+| `Minh Triết` | 153 Hz | Southern | news |
+| `Minh Đức` | 155 Hz | Northern | news |
+
+```bash
+npm run tts:compare     # synthesise every male preset and measure its pitch
+```
 
 Set it in `.env`:
 
