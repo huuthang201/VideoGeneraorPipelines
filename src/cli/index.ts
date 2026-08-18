@@ -47,8 +47,10 @@ program
   .option('--force', 'rebuild even when nothing changed', false)
   .option('--mock-tts', 'use placeholder narration instead of calling Edge TTS', false)
   .option('--no-publish', 'leave the output in runtime/jobs instead of copying to 03_OUTPUT')
+  .option('--voice <name>', 'override TTS_VOICE for this run, e.g. vi-VN-NamMinhNeural')
   .description('Run the full pipeline for one project')
-  .action(async (job: string, opts: { force: boolean; mockTts: boolean; publish: boolean }) => {
+  .action(
+    async (job: string, opts: { force: boolean; mockTts: boolean; publish: boolean; voice?: string }) => {
     const config = loadConfig();
     const projectId = resolveProjectId(job, config.jobsDir);
     const logger = createLogger({ level: config.logLevel }).forProject(projectId);
@@ -62,11 +64,13 @@ program
           force: opts.force,
           useMockTts: opts.mockTts,
           publish: opts.publish,
+          voiceOverride: opts.voice,
           storyboardSource: new ClaudeCodeStoryboardProvider(config, logger),
         }),
       logger,
     );
-  });
+  },
+);
 
 program
   .command('publish')

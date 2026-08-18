@@ -74,6 +74,8 @@ export interface RunPipelineOptions {
    * looks for it.
    */
   publish?: boolean;
+  /** Overrides the configured voice for this run, e.g. from --voice. */
+  voiceOverride?: string;
   storyboardSource?: StoryboardSource;
 }
 
@@ -120,6 +122,13 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       infoJson: info ? JSON.stringify(info) : null,
       storyboardJson: existingStoryboardRaw,
       pipelineVersion: PIPELINE_VERSION,
+      renderSettings: {
+        voice: options.voiceOverride ?? config.tts.voice,
+        rate: config.tts.rate,
+        pitch: config.tts.pitch,
+        provider: options.useMockTts ? 'mock' : config.tts.provider,
+        style: config.video.style,
+      },
     });
 
     if (!force && canSkip(job, inputHash, await exists(paths.videoMp4))) {
@@ -181,6 +190,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       logger,
       reuseVoice: options.reuseVoice ?? false,
       useMockTts: options.useMockTts ?? false,
+      voiceOverride: options.voiceOverride,
     });
 
     logger.done(
@@ -280,9 +290,16 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       // ---- 9. Side deliverables (spec §46) --------------------------------
       await writeScript(paths, storyboard);
       await copyCaptions(paths, tts);
+      // The published storyboard records the voice that was actually used, not
+      // whatever the model originally suggested, so the artifact matches the
+      // audio beside it.
+      const asRendered: Storyboard = {
+        ...storyboard,
+        voice: { ...storyboard.voice, voice: tts.voice, rate: config.tts.rate, pitch: config.tts.pitch },
+      };
       await writeFile(
         path.join(paths.output, 'storyboard.json'),
-        `${JSON.stringify(storyboard, null, 2)}\n`,
+        `${JSON.stringify(asRendered, null, 2)}\n`,
         'utf8',
       );
 
@@ -363,6 +380,7 @@ async function synthesize(args: {
   logger: Logger;
   reuseVoice: boolean;
   useMockTts: boolean;
+  voiceOverride?: string;
 }): Promise<TTSResult> {
   const { narration, storyboard, paths, config, logger } = args;
 
@@ -379,15 +397,28 @@ async function synthesize(args: {
       duration,
       words,
       isMock: false,
-      voice: storyboard.voice.voice,
+      voice: args.voiceOverride ?? config.tts.voice,
     };
   }
 
   const useMock = args.useMockTts || config.tts.provider === 'mock';
   const provider: TTSProvider = useMock ? new MockTTSProvider() : new EdgeTTSProvider(config.tts.pythonBin);
 
-  const rate = storyboard.voice.rate ?? config.tts.rate;
-  const pitch = storyboard.voice.pitch ?? config.tts.pitch;
+  /**
+   * Configuration decides the voice; the storyboard only records it.
+   *
+   * Reading `storyboard.voice.voice` instead looked reasonable but made the
+   * setting impossible to change: Claude writes the default voice into the
+   * storyboard when it generates one, and from then on editing .env rebuilt the
+   * video - costing a full render - and produced byte-for-byte the same
+   * narration. That is worse than refusing, because it reports success.
+   *
+   * This matches how width, height and fps already work: system settings come
+   * from config, and the storyboard is the record of what was used.
+   */
+  const voice = args.voiceOverride ?? config.tts.voice;
+  const rate = config.tts.rate;
+  const pitch = config.tts.pitch;
 
   const cache = new FileCache(path.join(config.runtimeDir, 'cache'));
   // Every input that changes how the audio sounds belongs in the key. Omitting
@@ -395,7 +426,7 @@ async function synthesize(args: {
   const cacheKey = FileCache.key({
     provider: provider.name,
     text: narration,
-    voice: storyboard.voice.voice,
+    voice,
     rate,
     pitch,
   });
@@ -428,8 +459,14 @@ async function synthesize(args: {
       provider.synthesize({
         text: narration,
         language: 'vi-VN',
-        voice: storyboard.voice.voice,
+        // Both resolved above from config. Passing `storyboard.voice.voice`
+        // here is what made the setting unchangeable, and omitting `pitch`
+        // meant the delivery tuning never reached the synthesiser at all -
+        // while the cache key recorded the requested values, so the stored
+        // audio did not match its own key.
+        voice,
         rate,
+        pitch,
         outDir: paths.audio,
       }),
     {

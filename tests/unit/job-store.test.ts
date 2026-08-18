@@ -66,7 +66,7 @@ describe('computeInputHash', () => {
   it('is stable across calls with identical input', async () => {
     const a = await imageFile('01.jpg', 'aaa');
     const b = await imageFile('02.jpg', 'bbb');
-    const args = { imagePaths: [a, b], infoJson: '{"n":1}', storyboardJson: null, pipelineVersion: '1.0.0' };
+    const args = { imagePaths: [a, b], infoJson: '{"n":1}', storyboardJson: null, pipelineVersion: '1.0.0', renderSettings: {} };
 
     expect(await computeInputHash(args)).toBe(await computeInputHash(args));
   });
@@ -74,7 +74,7 @@ describe('computeInputHash', () => {
   it('ignores the order the paths are given in', async () => {
     const a = await imageFile('01.jpg', 'aaa');
     const b = await imageFile('02.jpg', 'bbb');
-    const base = { infoJson: null, storyboardJson: null, pipelineVersion: '1.0.0' };
+    const base = { infoJson: null, storyboardJson: null, pipelineVersion: '1.0.0', renderSettings: {} };
 
     expect(await computeInputHash({ ...base, imagePaths: [a, b] })).toBe(
       await computeInputHash({ ...base, imagePaths: [b, a] }),
@@ -83,7 +83,7 @@ describe('computeInputHash', () => {
 
   it('changes when an image changes', async () => {
     const file = await imageFile('01.jpg', 'original');
-    const args = { imagePaths: [file], infoJson: null, storyboardJson: null, pipelineVersion: '1.0.0' };
+    const args = { imagePaths: [file], infoJson: null, storyboardJson: null, pipelineVersion: '1.0.0', renderSettings: {} };
     const before = await computeInputHash(args);
 
     await writeFile(file, 'edited', 'utf8');
@@ -92,7 +92,7 @@ describe('computeInputHash', () => {
 
   it('changes when info.json or the storyboard changes', async () => {
     const file = await imageFile('01.jpg', 'x');
-    const base = { imagePaths: [file], pipelineVersion: '1.0.0' };
+    const base = { imagePaths: [file], pipelineVersion: '1.0.0', renderSettings: {} };
 
     const plain = await computeInputHash({ ...base, infoJson: null, storyboardJson: null });
     const withInfo = await computeInputHash({ ...base, infoJson: '{"price":1}', storyboardJson: null });
@@ -105,9 +105,9 @@ describe('computeInputHash', () => {
     // The escape hatch for invalidating every cached output after a change in
     // how videos are built.
     const file = await imageFile('01.jpg', 'x');
-    const base = { imagePaths: [file], infoJson: null, storyboardJson: null };
+    const base = { imagePaths: [file], infoJson: null, storyboardJson: null, renderSettings: {} };
 
-    expect(await computeInputHash({ ...base, pipelineVersion: '1.0.0' })).not.toBe(
+    expect(await computeInputHash({ ...base, pipelineVersion: '1.0.0', renderSettings: {} })).not.toBe(
       await computeInputHash({ ...base, pipelineVersion: '1.1.0' }),
     );
   });
@@ -135,5 +135,53 @@ describe('job.json round trip', () => {
   it('returns null when no job file exists yet', async () => {
     const paths = jobPaths(path.join(workDir, 'jobs'), 'missing');
     expect(await readJob(paths)).toBeNull();
+  });
+});
+
+describe('render settings invalidate the cached result', () => {
+  // The trap this closes: changing the voice in .env and re-running reported
+  // "already up to date" and skipped, because the hash only covered input
+  // *files*. Nothing about the images had changed, but the finished video
+  // would have been different - and the user has no reason to guess that
+  // --force is what unblocks it.
+  async function hashWith(renderSettings: Record<string, string>): Promise<string> {
+    const dir = path.join(workDir, 'settings');
+    await mkdir(dir, { recursive: true });
+    const file = path.join(dir, '01.jpg');
+    await writeFile(file, 'image bytes', 'utf8');
+
+    return computeInputHash({
+      imagePaths: [file],
+      infoJson: '{"name":"x"}',
+      storyboardJson: null,
+      pipelineVersion: '1.0.0',
+      renderSettings,
+    });
+  }
+
+  const BASE = {
+    voice: 'vi-VN-HoaiMyNeural',
+    rate: '+15%',
+    pitch: '+25Hz',
+    provider: 'edge',
+    style: 'tiktok-fast',
+  };
+
+  it.each(['voice', 'rate', 'pitch', 'provider', 'style'])(
+    'changing %s produces a different hash',
+    async (key) => {
+      const before = await hashWith(BASE);
+      const after = await hashWith({ ...BASE, [key]: 'something-else' });
+      expect(after).not.toBe(before);
+    },
+  );
+
+  it('is unchanged when the settings are the same', async () => {
+    expect(await hashWith(BASE)).toBe(await hashWith({ ...BASE }));
+  });
+
+  it('does not depend on the order the settings are given in', async () => {
+    const reversed = Object.fromEntries(Object.entries(BASE).reverse());
+    expect(await hashWith(reversed)).toBe(await hashWith(BASE));
   });
 });
