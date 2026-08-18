@@ -1,4 +1,5 @@
 import type { StyleName } from '../../domain/config';
+import type { MotionAmplitude } from '../animations/presets';
 
 /**
  * Styles are data, not components (spec §33).
@@ -49,6 +50,8 @@ export interface Theme {
     transitionDurationFrames: number;
     springDamping: number;
     springStiffness: number;
+    /** How far the Ken Burns camera travels. See MotionAmplitude. */
+    amplitude: MotionAmplitude;
   };
 
   /** Progress bar across the top showing how far through the video we are. */
@@ -96,6 +99,9 @@ export const THEME_BY_STYLE: Record<StyleName, Theme> = {
       transitionDurationFrames: 6,
       springDamping: 12,
       springStiffness: 220,
+      // Deliberately strong. This style competes for attention in a feed, and
+      // a push-in the viewer cannot perceive is the same as no push-in at all.
+      amplitude: { zoom: 0.32, panOverscan: 1.3, drift: 0.14 },
     },
     progressBar: { visible: true, height: 8, color: '#ffe14d' },
   },
@@ -136,6 +142,7 @@ export const THEME_BY_STYLE: Record<StyleName, Theme> = {
       transitionDurationFrames: 12,
       springDamping: 18,
       springStiffness: 140,
+      amplitude: { zoom: 0.2, panOverscan: 1.2, drift: 0.08 },
     },
     progressBar: { visible: true, height: 5, color: '#4da3ff' },
   },
@@ -176,6 +183,8 @@ export const THEME_BY_STYLE: Record<StyleName, Theme> = {
       transitionDurationFrames: 18,
       springDamping: 26,
       springStiffness: 90,
+      // Restrained on purpose: stillness is what this style is for.
+      amplitude: { zoom: 0.1, panOverscan: 1.12, drift: 0.04 },
     },
     progressBar: { visible: false, height: 0, color: 'transparent' },
   },

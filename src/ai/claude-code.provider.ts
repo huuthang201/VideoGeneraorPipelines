@@ -229,6 +229,7 @@ export class ClaudeCodeStoryboardProvider {
         provider: this.config.tts.provider,
         voice: draft.voice.voice,
         rate: draft.voice.rate ?? this.config.tts.rate,
+        pitch: this.config.tts.pitch,
       },
       content: {
         hook: draft.content.hook,

@@ -34,6 +34,7 @@ export const SceneShell: React.FC<
         frameWidth={width}
         frameHeight={height}
         backgroundColor={theme.colors.background}
+        amplitude={theme.motion.amplitude}
       />
 
       <AbsoluteFill style={{ background: scrimGradient(scrimPosition, theme.colors.scrim) }} />

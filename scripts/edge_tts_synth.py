@@ -72,12 +72,27 @@ async def list_voices(locale: str) -> None:
     )
 
 
-async def synthesize(text: str, voice: str, rate: str | None, out_path: Path) -> None:
+async def synthesize(
+    text: str,
+    voice: str,
+    rate: str | None,
+    out_path: Path,
+    pitch: str | None = None,
+    volume: str | None = None,
+) -> None:
     import edge_tts
 
+    # Vietnamese has exactly two Edge voices, so the delivery cannot be changed
+    # by picking a different speaker. Rate and pitch are the only levers between
+    # a flat read and a lively one, which makes exposing them essential rather
+    # than a nicety.
     kwargs = {}
     if rate:
         kwargs["rate"] = rate
+    if pitch:
+        kwargs["pitch"] = pitch
+    if volume:
+        kwargs["volume"] = volume
 
     # edge-tts 7.x defaults to boundary="SentenceBoundary", which returns a
     # single event for the whole utterance - useless for both caption
@@ -137,6 +152,8 @@ def main() -> None:
     parser.add_argument("--text-file", help="UTF-8 file containing the text to speak")
     parser.add_argument("--voice", default="vi-VN-HoaiMyNeural")
     parser.add_argument("--rate", default=None, help="e.g. +5%%")
+    parser.add_argument("--pitch", default=None, help="e.g. +15Hz")
+    parser.add_argument("--volume", default=None, help="e.g. +0%%")
     parser.add_argument("--out", help="Output mp3 path")
     parser.add_argument("--list-voices", action="store_true")
     parser.add_argument("--locale", default="vi-VN")
@@ -159,7 +176,9 @@ def main() -> None:
         if not text:
             _fail(2, "Text file is empty; Vietnamese narration is mandatory")
 
-        asyncio.run(synthesize(text, args.voice, args.rate, Path(args.out)))
+        asyncio.run(
+            synthesize(text, args.voice, args.rate, Path(args.out), args.pitch, args.volume)
+        )
     except SystemExit:
         raise
     except Exception as exc:  # noqa: BLE001 - surface everything to Node as JSON

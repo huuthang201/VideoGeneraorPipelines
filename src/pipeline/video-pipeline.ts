@@ -387,12 +387,17 @@ async function synthesize(args: {
   const provider: TTSProvider = useMock ? new MockTTSProvider() : new EdgeTTSProvider(config.tts.pythonBin);
 
   const rate = storyboard.voice.rate ?? config.tts.rate;
+  const pitch = storyboard.voice.pitch ?? config.tts.pitch;
+
   const cache = new FileCache(path.join(config.runtimeDir, 'cache'));
+  // Every input that changes how the audio sounds belongs in the key. Omitting
+  // pitch would mean retuning the delivery silently replayed the old recording.
   const cacheKey = FileCache.key({
     provider: provider.name,
     text: narration,
     voice: storyboard.voice.voice,
     rate,
+    pitch,
   });
 
   // Spec §54. This is the most valuable cache in the pipeline: the same line in

@@ -11,6 +11,14 @@ export interface TTSInput {
   voice: string;
   /** Edge-style relative rate, e.g. "+5%". */
   rate?: string;
+  /**
+   * Edge-style pitch offset, e.g. "+25Hz".
+   *
+   * Vietnamese has exactly two Edge voices, so delivery cannot be changed by
+   * choosing a different speaker. Rate and pitch are the only difference
+   * between a flat read and a lively one.
+   */
+  pitch?: string;
   /** Directory to write voice.mp3 and captions.srt into. */
   outDir: string;
 }

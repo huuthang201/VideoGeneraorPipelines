@@ -1,7 +1,7 @@
 import { AbsoluteFill, Img, staticFile, useCurrentFrame } from 'remotion';
 import type { AnimationName, ImageFit } from '../../domain/scene';
 import { computeFit, type FitBox } from '../layout/fit';
-import { getImageMotion } from '../animations/presets';
+import { getImageMotion, type MotionAmplitude } from '../animations/presets';
 
 export interface ProductImageProps {
   /** Path relative to the Remotion public dir. */
@@ -16,6 +16,8 @@ export interface ProductImageProps {
   frameWidth: number;
   frameHeight: number;
   backgroundColor: string;
+  /** Theme-supplied camera travel. */
+  amplitude: MotionAmplitude;
 }
 
 /**
@@ -42,12 +44,13 @@ export const ProductImage: React.FC<ProductImageProps> = ({
   frameWidth,
   frameHeight,
   backgroundColor,
+  amplitude,
 }) => {
   const frame = useCurrentFrame();
 
   // Guard the single-frame case so progress is 0 rather than NaN.
   const progress = durationInFrames > 1 ? frame / (durationInFrames - 1) : 0;
-  const motion = getImageMotion(animation, progress);
+  const motion = getImageMotion(animation, progress, amplitude);
 
   const { foreground, background } = computeFit(width, height, frameWidth, frameHeight, fit);
   const url = staticFile(src);

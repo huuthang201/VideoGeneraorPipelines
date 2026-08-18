@@ -19,6 +19,7 @@ export const StoryboardSchema = z.strictObject({
     provider: z.string().min(1),
     voice: z.string().min(1),
     rate: z.string().optional(),
+    pitch: z.string().optional(),
   }),
   content: z.strictObject({
     hook: z.string().min(1),
@@ -66,6 +67,7 @@ export const StoryboardDraftSchema = z.strictObject({
   voice: z.strictObject({
     voice: z.string().min(1),
     rate: z.string().optional(),
+    pitch: z.string().optional(),
   }),
   content: z.strictObject({
     hook: z.string().min(1),

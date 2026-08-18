@@ -20,21 +20,32 @@ export interface ImageMotion {
   translateYRatio: number;
 }
 
-/** Zoom endpoints. Small on purpose - a heavy zoom reads as cheap. */
-const ZOOM_MIN = 1.0;
-const ZOOM_MAX = 1.14;
-
 /**
- * Pans hold a constant overscan so there is material to slide into view. The
- * travel distance is derived from it: at 1.12x there is 12% of slack, and using
- * half of that each way keeps the visible edge comfortably inside the source.
+ * How far the camera travels, as a fraction of the frame.
+ *
+ * These are per-theme rather than global because the right amount of movement
+ * is a style decision, not a constant: a fast TikTok cut wants visible push-in,
+ * while the minimal style is built around stillness.
+ *
+ * The original values (14% zoom, 6% pan) were far too timid. Spread across a
+ * five to nine second scene that reads as a static photograph, which defeats
+ * the point of Ken Burns in spec §24 - the whole reason it exists is to get
+ * twenty-five seconds of video out of three still images.
  */
-const PAN_OVERSCAN = 1.12;
-const PAN_TRAVEL = (PAN_OVERSCAN - 1) / 2;
+export interface MotionAmplitude {
+  /** Extra scale at the end of a zoom, e.g. 0.3 means 1.0 -> 1.3. */
+  zoom: number;
+  /** Total overscan held during a pan; half of it is travelled each way. */
+  panOverscan: number;
+  /** Scale travel for animations that are not camera moves. */
+  drift: number;
+}
 
-/** Applied to non-camera animations so every scene keeps some life. */
-const DRIFT_MIN = 1.0;
-const DRIFT_MAX = 1.05;
+export const DEFAULT_AMPLITUDE: MotionAmplitude = {
+  zoom: 0.18,
+  panOverscan: 1.18,
+  drift: 0.07,
+};
 
 const lerp = (from: number, to: number, t: number): number => from + (to - from) * t;
 
@@ -46,30 +57,41 @@ const STATIC: ImageMotion = { scale: 1, translateXRatio: 0, translateYRatio: 0 }
  * @param animation whitelisted name chosen by Claude
  * @param progress  0 at the scene's first frame, 1 at its last
  */
-export function getImageMotion(animation: AnimationName, progress: number): ImageMotion {
+export function getImageMotion(
+  animation: AnimationName,
+  progress: number,
+  amplitude: MotionAmplitude = DEFAULT_AMPLITUDE,
+): ImageMotion {
   const t = clamp01(progress);
+
+  const zoomMin = 1;
+  const zoomMax = 1 + amplitude.zoom;
+  const panOverscan = amplitude.panOverscan;
+  // Half the slack each way, so the visible edge never leaves the source.
+  const panTravel = (panOverscan - 1) / 2;
+  const driftMax = 1 + amplitude.drift;
 
   switch (animation) {
     case 'none':
       return STATIC;
 
     case 'zoom-in':
-      return { scale: lerp(ZOOM_MIN, ZOOM_MAX, t), translateXRatio: 0, translateYRatio: 0 };
+      return { scale: lerp(zoomMin, zoomMax, t), translateXRatio: 0, translateYRatio: 0 };
 
     case 'zoom-out':
-      return { scale: lerp(ZOOM_MAX, ZOOM_MIN, t), translateXRatio: 0, translateYRatio: 0 };
+      return { scale: lerp(zoomMax, zoomMin, t), translateXRatio: 0, translateYRatio: 0 };
 
     case 'pan-left':
-      return { scale: PAN_OVERSCAN, translateXRatio: lerp(PAN_TRAVEL, -PAN_TRAVEL, t), translateYRatio: 0 };
+      return { scale: panOverscan, translateXRatio: lerp(panTravel, -panTravel, t), translateYRatio: 0 };
 
     case 'pan-right':
-      return { scale: PAN_OVERSCAN, translateXRatio: lerp(-PAN_TRAVEL, PAN_TRAVEL, t), translateYRatio: 0 };
+      return { scale: panOverscan, translateXRatio: lerp(-panTravel, panTravel, t), translateYRatio: 0 };
 
     case 'pan-up':
-      return { scale: PAN_OVERSCAN, translateXRatio: 0, translateYRatio: lerp(PAN_TRAVEL, -PAN_TRAVEL, t) };
+      return { scale: panOverscan, translateXRatio: 0, translateYRatio: lerp(panTravel, -panTravel, t) };
 
     case 'pan-down':
-      return { scale: PAN_OVERSCAN, translateXRatio: 0, translateYRatio: lerp(-PAN_TRAVEL, PAN_TRAVEL, t) };
+      return { scale: panOverscan, translateXRatio: 0, translateYRatio: lerp(-panTravel, panTravel, t) };
 
     // Content-entry animations: the image itself just drifts.
     case 'fade':
@@ -77,7 +99,7 @@ export function getImageMotion(animation: AnimationName, progress: number): Imag
     case 'slide-left':
     case 'slide-right':
     case 'slide-up':
-      return { scale: lerp(DRIFT_MIN, DRIFT_MAX, t), translateXRatio: 0, translateYRatio: 0 };
+      return { scale: lerp(1, driftMax, t), translateXRatio: 0, translateYRatio: 0 };
   }
 }
 

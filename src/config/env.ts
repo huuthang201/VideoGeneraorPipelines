@@ -19,7 +19,8 @@ const EnvSchema = z.object({
 
   TTS_PROVIDER: z.enum(['edge', 'mock']).default('edge'),
   TTS_VOICE: z.string().default('vi-VN-HoaiMyNeural'),
-  TTS_RATE: z.string().default('+5%'),
+  TTS_RATE: z.string().default('+15%'),
+  TTS_PITCH: z.string().default('+25Hz'),
   PYTHON_BIN: z.string().default('./.venv/bin/python3'),
 
   AI_PROVIDER: z.enum(['claude-code']).default('claude-code'),
@@ -51,7 +52,7 @@ export interface AppConfig {
   runtimeDir: string;
   jobsDir: string;
 
-  tts: { provider: 'edge' | 'mock'; voice: string; rate: string; pythonBin: string };
+  tts: { provider: 'edge' | 'mock'; voice: string; rate: string; pitch: string; pythonBin: string };
   ai: { provider: 'claude-code'; claudeBin: string; model: string };
   video: {
     width: number;
@@ -88,6 +89,7 @@ export function loadConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfi
       provider: env.TTS_PROVIDER,
       voice: env.TTS_VOICE,
       rate: env.TTS_RATE,
+      pitch: env.TTS_PITCH,
       pythonBin: path.resolve(env.PYTHON_BIN),
     },
     ai: { provider: env.AI_PROVIDER, claudeBin: env.CLAUDE_BIN, model: env.CLAUDE_MODEL },

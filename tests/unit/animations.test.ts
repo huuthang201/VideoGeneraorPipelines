@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ANIMATIONS } from '../../src/domain/scene';
 import {
+  DEFAULT_AMPLITUDE,
   getContentEntry,
   getImageMotion,
   requiresOverscan,
 } from '../../src/remotion/animations/presets';
+import { STYLES } from '../../src/domain/config';
+import { getTheme } from '../../src/remotion/themes/theme';
 
 describe('getImageMotion', () => {
   it('handles every whitelisted animation', () => {
@@ -98,5 +101,65 @@ describe('getContentEntry', () => {
     expect(getContentEntry('spring')).toBe('spring');
     expect(getContentEntry('slide-up')).toBe('slide-up');
     expect(getContentEntry('none')).toBe('none');
+  });
+});
+
+describe('motion amplitude', () => {
+  it('is strong enough to be visible over a long scene', () => {
+    // The original 14% zoom and 6% pan were imperceptible spread across five to
+    // nine seconds, so scenes read as static photographs - the exact complaint
+    // that prompted this. Ken Burns exists (spec §24) to make three stills
+    // carry twenty-five seconds; motion below this threshold does not.
+    for (const style of STYLES) {
+      if (style === 'minimal') continue; // stillness is that style's whole point
+      const { amplitude } = getTheme(style).motion;
+      expect(amplitude.zoom).toBeGreaterThanOrEqual(0.18);
+      expect(amplitude.panOverscan - 1).toBeGreaterThanOrEqual(0.18);
+    }
+  });
+
+  it('ranks the styles the way their descriptions promise', () => {
+    const zoom = (s: (typeof STYLES)[number]) => getTheme(s).motion.amplitude.zoom;
+    expect(zoom('tiktok-fast')).toBeGreaterThan(zoom('modern-tech'));
+    expect(zoom('modern-tech')).toBeGreaterThan(zoom('minimal'));
+  });
+
+  it('keeps pan travel inside the overscan at every amplitude', () => {
+    // Raising the amplitude must not let a pan slide the image off its own edge.
+    for (const style of STYLES) {
+      const { amplitude } = getTheme(style).motion;
+      for (const animation of ['pan-left', 'pan-right', 'pan-up', 'pan-down'] as const) {
+        for (const t of [0, 0.5, 1]) {
+          const m = getImageMotion(animation, t, amplitude);
+          const slack = (m.scale - 1) / 2;
+          expect(Math.abs(m.translateXRatio)).toBeLessThanOrEqual(slack + 1e-9);
+          expect(Math.abs(m.translateYRatio)).toBeLessThanOrEqual(slack + 1e-9);
+        }
+      }
+    }
+  });
+
+  it('never scales below 1 at any amplitude', () => {
+    for (const style of STYLES) {
+      const { amplitude } = getTheme(style).motion;
+      for (const animation of ANIMATIONS) {
+        for (const t of [0, 0.5, 1]) {
+          expect(getImageMotion(animation, t, amplitude).scale).toBeGreaterThanOrEqual(1);
+        }
+      }
+    }
+  });
+
+  it('leaves "none" static however loud the theme is', () => {
+    const loud = getTheme('tiktok-fast').motion.amplitude;
+    expect(getImageMotion('none', 1, loud)).toEqual({
+      scale: 1,
+      translateXRatio: 0,
+      translateYRatio: 0,
+    });
+  });
+
+  it('falls back to a sensible default when no amplitude is given', () => {
+    expect(getImageMotion('zoom-in', 1)).toEqual(getImageMotion('zoom-in', 1, DEFAULT_AMPLITUDE));
   });
 });

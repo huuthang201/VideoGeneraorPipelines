@@ -48,6 +48,7 @@ export class EdgeTTSProvider implements TTSProvider {
     const script = path.join(process.cwd(), 'scripts', 'edge_tts_synth.py');
     const args = [script, '--text-file', textPath, '--voice', input.voice, '--out', audioPath];
     if (input.rate) args.push('--rate', input.rate);
+    if (input.pitch) args.push('--pitch', input.pitch);
 
     let result;
     try {
