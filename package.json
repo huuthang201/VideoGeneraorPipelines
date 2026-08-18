@@ -26,7 +26,8 @@
     "check": "tsx src/cli/index.ts validate",
     "setup:vieneu": "bash scripts/setup-vieneu.sh",
     "tts:test": "./.venv-vieneu/bin/python3 scripts/test_tts.py",
-    "tts:voices": "./.venv-vieneu/bin/python3 scripts/test_tts.py --list"
+    "tts:voices": "./.venv-vieneu/bin/python3 scripts/test_tts.py --list",
+    "tts:compare": "./.venv-vieneu/bin/python3 scripts/compare_voices.py"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.512",
