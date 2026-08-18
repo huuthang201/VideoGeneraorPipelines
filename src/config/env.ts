@@ -17,8 +17,19 @@ loadDotenv({ quiet: true });
 const EnvSchema = z.object({
   DRIVE_ROOT: z.string().default('./workspace/AI-Shorts'),
 
-  TTS_PROVIDER: z.enum(['edge', 'mock']).default('edge'),
-  TTS_VOICE: z.string().default('vi-VN-HoaiMyNeural'),
+  /**
+   * `vieneu` is the production engine (on-device, v3 Turbo). `edge` is kept as
+   * a selectable fallback because it needs no model download and no Python
+   * 3.10+, which makes it the only option on a machine where VieNeu will not
+   * install. `mock` is silent audio for offline development.
+   */
+  TTS_ENGINE: z.enum(['vieneu', 'edge', 'mock']).default('vieneu'),
+  TTS_VOICE: z.string().default('adam_vi'),
+  /** Reference clip for a cloned voice. Empty means use a built-in preset. */
+  TTS_REFERENCE_AUDIO: z.string().default('assets/voices/adam_vi.wav'),
+  /** Python 3.10+ interpreter with `vieneu` installed. */
+  VIENEU_PYTHON_BIN: z.string().default('./.venv-vieneu/bin/python3'),
+  // Edge-only delivery controls; VieNeu takes its delivery from the voice.
   TTS_RATE: z.string().default('+15%'),
   TTS_PITCH: z.string().default('+25Hz'),
   PYTHON_BIN: z.string().default('./.venv/bin/python3'),
@@ -52,7 +63,16 @@ export interface AppConfig {
   runtimeDir: string;
   jobsDir: string;
 
-  tts: { provider: 'edge' | 'mock'; voice: string; rate: string; pitch: string; pythonBin: string };
+  tts: {
+    engine: 'vieneu' | 'edge' | 'mock';
+    voice: string;
+    /** Absolute path to the reference clip, or null when using a preset. */
+    referenceAudio: string | null;
+    rate: string;
+    pitch: string;
+    pythonBin: string;
+    vieneuPythonBin: string;
+  };
   ai: { provider: 'claude-code'; claudeBin: string; model: string };
   video: {
     width: number;
@@ -86,11 +106,17 @@ export function loadConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfi
     jobsDir: path.join(runtimeDir, 'jobs'),
 
     tts: {
-      provider: env.TTS_PROVIDER,
+      engine: env.TTS_ENGINE,
       voice: env.TTS_VOICE,
+      // Resolved here so nothing downstream depends on the working directory,
+      // and so the same .env works on macOS, Linux and inside a container.
+      referenceAudio: env.TTS_REFERENCE_AUDIO.trim()
+        ? path.resolve(env.TTS_REFERENCE_AUDIO)
+        : null,
       rate: env.TTS_RATE,
       pitch: env.TTS_PITCH,
       pythonBin: path.resolve(env.PYTHON_BIN),
+      vieneuPythonBin: path.resolve(env.VIENEU_PYTHON_BIN),
     },
     ai: { provider: env.AI_PROVIDER, claudeBin: env.CLAUDE_BIN, model: env.CLAUDE_MODEL },
     video: {
@@ -128,6 +154,9 @@ export function jobPaths(jobsDir: string, projectId: string) {
     thumbnailJpg: path.join(root, 'output', 'thumbnail.jpg'),
     scriptTxt: path.join(root, 'output', 'script.txt'),
     captionsSrt: path.join(root, 'audio', 'captions.srt'),
+    // VieNeu emits 48 kHz WAV natively; keeping it unconverted avoids a
+    // resample the pipeline gains nothing from (spec §8).
+    voiceWav: path.join(root, 'audio', 'voice.wav'),
     voiceMp3: path.join(root, 'audio', 'voice.mp3'),
   };
 }

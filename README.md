@@ -1,104 +1,131 @@
 # Auto Short Video Generator
 
-Drop a folder of product photos in, get a 1080x1920 MP4 with Vietnamese
-narration and synced captions out.
+Turns a folder of product photos into a 1080×1920 MP4 with Vietnamese narration.
 
-```
-01_INPUT/baseus-ma10/{01.jpg,02.jpg,03.jpg,info.json}
-        ↓
-03_OUTPUT/baseus-ma10/{video.mp4,thumbnail.jpg,storyboard.json,script.txt,captions.srt,job.json}
-```
+See [HUONG-DAN.md](HUONG-DAN.md) for the day-to-day guide (Vietnamese).
 
-## Setup
+## Vietnamese TTS
+
+**Engine:** VieNeu-TTS v3 Turbo — on-device, 48 kHz, no API key, no per-character
+billing.
+
+**Voice:** set by `TTS_VOICE`. Either one of 19 built-in Vietnamese presets, or a
+voice cloned from a reference clip.
+
+**Reference:** `assets/voices/adam_vi.wav` (see
+[assets/voices/README.md](assets/voices/README.md))
+
+### Install
 
 ```bash
-nvm use            # Node 22 (see .nvmrc)
 npm install
-npm run setup:python
-cp .env.example .env
+npm run setup:vieneu     # Python 3.10-3.13 venv + vieneu + model download
 ```
 
-`npm run setup:python` creates a project-local `.venv` with `edge-tts`. It is
-kept out of the system interpreter deliberately; nothing else is installed
-globally.
+VieNeu needs Python 3.10–3.13. The script finds a suitable interpreter, or tells
+you how to install one (`brew install python@3.12` on macOS).
 
-## Usage
+### Choosing a voice
 
 ```bash
-npx tsx src/cli/index.ts prepare workspace/AI-Shorts/01_INPUT/baseus-ma10
-npx tsx src/cli/index.ts generate baseus-ma10
+npm run tts:voices
 ```
 
-| Command | What it does | Claude calls | TTS calls |
-|---|---|---|---|
-| `prepare <dir>` | copy in, normalise images, write AI previews | 0 | 0 |
-| `generate <id>` | full pipeline | 1 (0 if a storyboard exists) | 1 (0 on cache hit) |
-| `render <id>` | re-render from the existing storyboard and voice | 0 | 0 |
-| `regenerate-content <id>` | discard the storyboard, ask again | 1 | 1 |
-| `generate-all` | every project under `runtime/jobs` | 1 each | 1 each |
-| `validate <mp4>` | check an output file | 0 | 0 |
+Male, Northern, narration-style presets — closest to a deep "Adam" read:
 
-Useful flags: `--force` rebuilds unchanged input, `--mock-tts` runs the whole
-pipeline offline with placeholder narration.
+| Voice | Style |
+|---|---|
+| `Thanh Bình` | storytelling (default) |
+| `Minh Đức` | news, firm |
+| `Phạm Tuyên` | natural |
 
-Tweaking an animation, a caption style or a theme costs nothing: edit
-`storyboard.json` and run `render`. Only `regenerate-content` spends a Claude
-call.
+Set it in `.env`:
 
-## How it fits together
-
-```
-photos + info.json
-      ↓  Claude (1 call, reads 768px previews)
-storyboard.json          ← the AI/non-AI boundary; everything after is deterministic
-      ↓  Edge TTS
-voice.mp3 + word timings
-      ↓  alignment
-timeline.json            ← frame-exact, the only thing Remotion sees
-      ↓  Remotion + ffmpeg
-video.mp4 → validated → output/
+```env
+TTS_ENGINE=vieneu
+TTS_VOICE=Thanh Bình
+TTS_REFERENCE_AUDIO=
 ```
 
-Claude writes copy and picks scenes. It never renders, never computes a
-duration, and never writes JSX - it may only choose from whitelisted scene
-types and animations. The engine never calls Claude and does not know Google
-Drive exists; it only sees `runtime/jobs/<id>/`.
+### Cloning a specific voice
 
-## Guarantees the code enforces
+Put a clean 3–8 second WAV clip at `assets/voices/adam_vi.wav`, then:
 
-- **Nothing invented.** Prices, specs, warranties and promotions must come from
-  `info.json`, checked mechanically in `src/ai/fact-guard.ts`. With no
-  `info.json`, no number may appear at all - including one spelled out in words.
-- **Captions track the voice.** Scene durations are derived from measured audio,
-  never from the model's guess, and the video always covers the full narration.
-- **Vietnamese narration is mandatory.** A job cannot complete without it, and
-  the check looks at audio content rather than merely at stream presence.
-- **Images are never stretched.** Portrait fills the frame; square and landscape
-  sit sharp over a blurred copy of themselves.
-- **Re-runs are free.** Unchanged input skips in under a second.
+```env
+TTS_VOICE=adam_vi
+TTS_REFERENCE_AUDIO=assets/voices/adam_vi.wav
+```
 
-## Configuration
+Cloning needs the PyTorch engine, which the default install leaves out because
+it is several gigabytes:
 
-Everything is in `.env` (see `.env.example`): workspace root, voice, video
-dimensions, feature flags. `DRIVE_ROOT` defaults to a local `./workspace` folder
-and can be pointed at a Google Drive path without any code change.
+```bash
+./.venv-vieneu/bin/python3 -m pip install 'vieneu[legacy]'
+```
 
-## Tests
+The reference clip is encoded once, registered with `add_voice` and persisted
+with `save_voices`, so later runs load the cached embedding rather than
+re-analysing the clip.
+
+If `TTS_REFERENCE_AUDIO` names a file that is not there, the job fails and names
+the path. It never silently substitutes another voice — a series of videos that
+quietly changes speaker halfway is worse than one that stops.
+
+### Test the voice without rendering
+
+```bash
+npm run tts:test        # writes tmp/test_adam_vi.wav
+afplay tmp/test_adam_vi.wav
+```
+
+### CPU / GPU
+
+CUDA is used when available, CPU otherwise, chosen at startup and logged:
+
+```
+[vieneu] loading VieNeu-TTS v3 Turbo on CPU...
+[vieneu] model ready in 4.9s, 19 preset voices
+```
+
+On Apple Silicon this runs on CPU via ONNX. Model load is roughly 5 seconds
+after the first download; synthesis of a 20-second narration takes about 15
+seconds.
+
+The model is loaded **once per run** by a long-lived worker process, so a batch
+of videos pays the startup cost a single time.
+
+### Subtitle timing
+
+VieNeu returns audio only — unlike the Edge service it replaced, it reports no
+word boundaries. Rather than add a forced-alignment model, narration is
+synthesised sentence by sentence so every sentence boundary is measured, and
+word positions are interpolated within each sentence by syllable weight.
+
+Scene cuts fall on sentence boundaries and stay exact; caption highlighting is
+accurate to within a sentence rather than drifting across the whole video.
+
+### Other engines
+
+`TTS_ENGINE` also accepts:
+
+- `edge` — Microsoft Edge TTS. No model download and runs on Python 3.7+, so it
+  remains the fallback on a machine where VieNeu will not install. Two
+  Vietnamese voices only.
+- `mock` — silent audio for offline development. Stamped `devMock: true` in
+  `job.json` and never published.
+
+## Running the pipeline
+
+```bash
+npm run prepare:project -- workspace/AI-Shorts/01_INPUT/<project>
+npm run generate -- <project>
+```
+
+Full command reference in [HUONG-DAN.md](HUONG-DAN.md).
+
+## Development
 
 ```bash
 npm test
 npm run typecheck
 ```
-
-The suite concentrates on the parts where a bug would be invisible in a
-finished video: timeline arithmetic, caption alignment, image fitting, and the
-fact guard.
-
-## Known fragility
-
-Edge TTS is an unofficial Microsoft endpoint that periodically starts rejecting
-clients. Since narration is mandatory, that makes it the single point of
-failure. The TTS cache means unchanged text never re-calls it, `--mock-tts`
-keeps everything else runnable offline, and `TTSProvider` is an interface -
-Azure offers the same `vi-VN-HoaiMyNeural` voice if a paid fallback is needed.
-Anything produced with `--mock-tts` is silent and is stamped `devMock: true`.

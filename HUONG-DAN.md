@@ -211,3 +211,49 @@ Không phải sửa dòng code nào.
 `assets/music/` và `assets/sfx/` đang trống. Bỏ file nhạc của bạn vào đó là
 video sẽ có nhạc, và nhạc tự động nhỏ lại khi có giọng đọc. Tool cố tình không
 tự tải nhạc từ Internet để tránh vấn đề bản quyền.
+
+---
+
+## Đổi sang VieNeu-TTS
+
+Từ bản này, giọng đọc mặc định là **VieNeu-TTS v3 Turbo** chạy ngay trên máy —
+không cần mạng khi tổng hợp, không tính phí theo ký tự.
+
+Cài một lần:
+
+```bash
+npm run setup:vieneu
+```
+
+Xem danh sách 19 giọng có sẵn:
+
+```bash
+npm run tts:voices
+```
+
+Nghe thử mà không cần render video:
+
+```bash
+npm run tts:test
+afplay tmp/test_adam_vi.wav
+```
+
+Đổi giọng trong `.env` (giọng nam Bắc, hợp narration):
+
+```env
+TTS_VOICE=Thanh Bình     # kể chuyện (mặc định)
+TTS_VOICE=Minh Đức       # tin tức, chắc
+TTS_VOICE=Phạm Tuyên     # tự nhiên
+```
+
+Muốn dùng giọng riêng của bạn: đặt file WAV sạch 3–8 giây vào
+`assets/voices/adam_vi.wav`, cài thêm engine PyTorch
+(`./.venv-vieneu/bin/python3 -m pip install 'vieneu[legacy]'`), rồi đặt:
+
+```env
+TTS_VOICE=adam_vi
+TTS_REFERENCE_AUDIO=assets/voices/adam_vi.wav
+```
+
+Nếu file không tồn tại, job sẽ **báo lỗi kèm đường dẫn** chứ không tự đổi sang
+giọng khác.

@@ -226,7 +226,7 @@ export class ClaudeCodeStoryboardProvider {
       },
       voice: {
         language: 'vi-VN',
-        provider: this.config.tts.provider,
+        provider: this.config.tts.engine,
         voice: draft.voice.voice,
         rate: draft.voice.rate ?? this.config.tts.rate,
         pitch: this.config.tts.pitch,

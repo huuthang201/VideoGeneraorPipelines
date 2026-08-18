@@ -15,6 +15,7 @@ import type { Logger } from '../utils/logger';
 import { listImageFiles, processImages } from '../image/sharp.processor';
 import { buildTimeline } from './build-timeline';
 import { EdgeTTSProvider } from '../tts/edge.provider';
+import { VieNeuTTSProvider } from '../tts/vieneu.provider';
 import { MockTTSProvider } from '../tts/mock.provider';
 import type { TTSProvider, TTSResult } from '../tts/types';
 import { getBundle } from '../video/bundler';
@@ -34,6 +35,8 @@ interface CachedVoice {
   words: TTSResult['words'];
   isMock: boolean;
   voice: string;
+  /** So a restore writes back the same container the engine produced. */
+  audioExt: string;
 }
 
 /**
@@ -126,7 +129,8 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
         voice: options.voiceOverride ?? config.tts.voice,
         rate: config.tts.rate,
         pitch: config.tts.pitch,
-        provider: options.useMockTts ? 'mock' : config.tts.provider,
+        engine: options.useMockTts ? 'mock' : config.tts.engine,
+        referenceAudio: config.tts.referenceAudio ?? '',
         style: config.video.style,
       },
     });
@@ -386,13 +390,19 @@ async function synthesize(args: {
 
   // RENDER-ONLY mode (spec §52): an existing voice track means the expensive
   // and network-dependent step can be skipped entirely.
-  if (args.reuseVoice && (await exists(paths.voiceMp3))) {
+  const existingVoice = (await exists(paths.voiceWav))
+    ? paths.voiceWav
+    : (await exists(paths.voiceMp3))
+      ? paths.voiceMp3
+      : null;
+
+  if (args.reuseVoice && existingVoice) {
     const { getDurationSeconds } = await import('../video/ffprobe');
-    const duration = await getDurationSeconds(paths.voiceMp3);
+    const duration = await getDurationSeconds(existingVoice);
     const words = await readWordTimings(paths);
     logger.done('Reusing existing voice.mp3 (no TTS call)');
     return {
-      audioPath: paths.voiceMp3,
+      audioPath: existingVoice,
       captionsPath: paths.captionsSrt,
       duration,
       words,
@@ -401,8 +411,7 @@ async function synthesize(args: {
     };
   }
 
-  const useMock = args.useMockTts || config.tts.provider === 'mock';
-  const provider: TTSProvider = useMock ? new MockTTSProvider() : new EdgeTTSProvider(config.tts.pythonBin);
+  const provider: TTSProvider = selectProvider(config, args.useMockTts, logger);
 
   /**
    * Configuration decides the voice; the storyboard only records it.
@@ -437,7 +446,8 @@ async function synthesize(args: {
   // to answer (see R1).
   const cached = await cache.get<CachedVoice>('tts', cacheKey);
   if (cached) {
-    await cache.restore(cached, { voice: paths.voiceMp3, captions: paths.captionsSrt });
+    const cachedVoicePath = cached.value.audioExt === '.wav' ? paths.voiceWav : paths.voiceMp3;
+    await cache.restore(cached, { voice: cachedVoicePath, captions: paths.captionsSrt });
     await writeFile(
       path.join(paths.audio, 'words.json'),
       `${JSON.stringify(cached.value.words, null, 2)}\n`,
@@ -445,7 +455,7 @@ async function synthesize(args: {
     );
     logger.done('Voice restored from cache (no TTS call)');
     return {
-      audioPath: paths.voiceMp3,
+      audioPath: cachedVoicePath,
       captionsPath: paths.captionsSrt,
       duration: cached.value.duration,
       words: cached.value.words,
@@ -492,6 +502,7 @@ async function synthesize(args: {
       words: result.words,
       isMock: result.isMock,
       voice: result.voice,
+      audioExt: path.extname(result.audioPath),
     },
     { voice: result.audioPath, captions: result.captionsPath },
   );
@@ -505,6 +516,27 @@ async function synthesize(args: {
   );
 
   return result;
+}
+
+/**
+ * Picks the narration engine (spec §10).
+ *
+ * VieNeu is the production engine. Edge remains selectable because it needs
+ * neither a model download nor Python 3.10+, so it is the only thing that works
+ * on a machine where VieNeu cannot be installed; mock is silent audio for
+ * offline development and is never publishable.
+ */
+function selectProvider(config: AppConfig, useMockTts: boolean, logger: Logger): TTSProvider {
+  if (useMockTts || config.tts.engine === 'mock') return new MockTTSProvider();
+
+  if (config.tts.engine === 'edge') return new EdgeTTSProvider(config.tts.pythonBin);
+
+  return new VieNeuTTSProvider({
+    pythonBin: config.tts.vieneuPythonBin,
+    referenceAudio: config.tts.referenceAudio,
+    voice: config.tts.voice,
+    onLog: (message) => logger.debug(message),
+  });
 }
 
 async function readWordTimings(paths: JobPaths): Promise<TTSResult['words']> {

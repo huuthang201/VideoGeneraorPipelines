@@ -1,6 +1,10 @@
 # deps
 node_modules/
 .venv/
+.venv-vieneu/
+
+# scratch output from npm run tts:test
+tmp/
 
 # secrets & local config
 .env
