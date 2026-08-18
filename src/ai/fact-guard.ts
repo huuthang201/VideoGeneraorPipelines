@@ -1,5 +1,6 @@
 import type { ProductInfo } from '../domain/project';
 import type { StoryboardDraft } from '../domain/storyboard';
+import { spokenNumbersIn } from './vietnamese-numbers';
 
 /**
  * Stops the model asserting facts about a product that nobody gave it
@@ -41,13 +42,6 @@ const B_END = '(?![\\p{L}\\p{N}])';
 
 const u = (source: string): RegExp => new RegExp(source, 'giu');
 
-/** Currency amounts: "399.000đ", "399k", "399 nghìn", "1.2 triệu". */
-const MONEY_PATTERNS = [
-  u(`\\d[\\d.,]*\\s*(?:đ|vnđ|vnd|₫)${B_END}`),
-  u(`${B_START}\\d[\\d.,]*\\s*k${B_END}`),
-  u(`${B_START}\\d[\\d.,]*\\s*(?:nghìn|ngàn|triệu|tỷ)${B_END}`),
-];
-
 /**
  * Marketing claims that imply a commitment the seller has to honour. These are
  * flagged on sight: unlike a number, there is no version of info.json that
@@ -73,19 +67,6 @@ const CLAIM_PATTERNS: { kind: FactViolation['kind']; pattern: RegExp; label: str
   },
 ];
 
-/** Bare numbers, for strict mode where nothing numeric is sourced. */
-const BARE_NUMBER = u(`${B_START}\\d[\\d.,]*${B_END}`);
-
-/**
- * Vietnamese number words, so a price spelled out for the narrator is caught
- * the same way a digit would be. The model naturally writes "ba trăm chín chín
- * nghìn" in narration because that is how it should be read aloud, and a
- * digit-only check would wave it straight through.
- */
-const NUMBER_WORDS = u(
-  `${B_START}(?:không|một|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|mươi|trăm|nghìn|ngàn|triệu|tỷ|rưỡi|lăm|tư)${B_END}`,
-);
-
 export interface FactGuardResult {
   ok: boolean;
   violations: FactViolation[];
@@ -96,41 +77,51 @@ export interface FactGuardResult {
 export function checkFacts(draft: StoryboardDraft, info: ProductInfo | null): FactGuardResult {
   const violations: FactViolation[] = [];
   const allowed = buildWhitelist(info);
-  const strict = info === null || info.price === undefined;
+  const allowedNumbers = buildNumberWhitelist(info);
+
+  /**
+   * Strict mode is about whether any figure is sourced at all - not about
+   * whether a *price* happens to be present.
+   *
+   * Keying it on the price was wrong in a way that only showed up on a real
+   * product: a bag whose info.json listed "Ngăn laptop 15.6 inch" but no price
+   * had its perfectly sourced "mười lăm phẩy sáu inch" rejected, with an error
+   * message complaining about a price that was never in question. Products with
+   * specifications and no price are ordinary, so that false positive made the
+   * guard unusable for them.
+   */
+  const strict = allowedNumbers.size === 0;
 
   for (const field of collectTextFields(draft)) {
-    // Spoken-out numbers only matter when there is no sourced price at all;
-    // once a price exists, the narration is expected to say it in words.
-    if (strict) {
-      const spelled = field.text.match(NUMBER_WORDS);
-      if (spelled && spelled.length >= 3) {
-        violations.push({
-          kind: 'price',
-          sceneId: field.sceneId,
-          field: field.name,
-          matched: spelled.slice(0, 6).join(' '),
-          message:
-            `"${field.text}" appears to speak a number aloud, but info.json provides no price. ` +
-            'Do not state or imply any price, measurement or specification.',
-        });
-      }
-    }
+    // Numbers are checked by value, in whichever form they were written.
+    // Narration spells them out because it is read aloud, so both the digits
+    // and the spoken words have to resolve to something info.json supports.
+    const stated = [
+      ...digitsIn(field.text),
+      ...moneyIn(field.text),
+      // A lone number word is almost always ordinary Vietnamese rather than a
+      // figure, so only deliberate multi-word runs count. "mười lăm phẩy sáu"
+      // is a measurement; the "một" in "một chiếc tai nghe" is an article.
+      ...spokenNumbersIn(field.text)
+        .filter((n) => n.tokens.length >= 2)
+        .map((n) => n.value),
+    ];
 
-    for (const pattern of MONEY_PATTERNS) {
-      for (const match of field.text.matchAll(pattern)) {
-        const text = match[0].trim();
-        if (isAllowed(text, allowed)) continue;
-        if (isPriceWithinTolerance(text, info)) continue;
-        violations.push({
-          kind: 'price',
-          sceneId: field.sceneId,
-          field: field.name,
-          matched: text,
-          message: strict
-            ? `"${text}" states a price, but info.json contains no price at all.`
-            : `"${text}" does not match the price in info.json (${String(info?.price)} ${info?.currency ?? 'VND'}).`,
-        });
-      }
+    for (const value of stated) {
+      if (isNumberAllowed(value, allowedNumbers)) continue;
+
+      violations.push({
+        // Price-magnitude figures are called out as such: it is the difference
+        // between misquoting a spec and misquoting what the buyer will pay.
+        kind: value >= PRICE_THRESHOLD ? 'price' : 'number',
+        sceneId: field.sceneId,
+        field: field.name,
+        matched: String(value),
+        message: strict
+          ? `"${field.text}" states the figure ${value}, but info.json contains no numbers to support it. ` +
+            'Describe what is visible in the photos instead.'
+          : `The figure ${value} does not appear in info.json. Allowed values: ${[...allowedNumbers].join(', ')}.`,
+      });
     }
 
     for (const { kind, pattern, label } of CLAIM_PATTERNS) {
@@ -146,20 +137,6 @@ export function checkFacts(draft: StoryboardDraft, info: ProductInfo | null): Fa
         });
       }
     }
-
-    if (strict) {
-      for (const match of field.text.matchAll(BARE_NUMBER)) {
-        const text = match[0].trim();
-        if (isAllowed(text, allowed)) continue;
-        violations.push({
-          kind: 'number',
-          sceneId: field.sceneId,
-          field: field.name,
-          matched: text,
-          message: `"${text}" is a specific figure, but info.json provides nothing to support it.`,
-        });
-      }
-    }
   }
 
   return {
@@ -167,6 +144,103 @@ export function checkFacts(draft: StoryboardDraft, info: ProductInfo | null): Fa
     violations,
     feedback: formatFeedback(violations),
   };
+}
+
+/**
+ * Amounts written with a unit attached: "399k", "400 nghìn", "1.2 triệu".
+ * digitsIn alone would read those as 399, 400 and 1.2 and compare the wrong
+ * magnitude against the whitelist.
+ */
+function moneyIn(text: string): number[] {
+  const values: number[] = [];
+  for (const match of text.matchAll(
+    u(`${B_START}\\d[\\d.,]*\\s*(?:k|nghìn|ngàn|triệu|tỷ|tỉ|đ|vnđ|vnd|₫)${B_END}`),
+  )) {
+    const value = parseVietnameseMoney(match[0]);
+    if (value !== null) values.push(value);
+  }
+  return values;
+}
+
+/** Unit suffixes that change a figure's magnitude, so moneyIn must own them. */
+const UNIT_SUFFIX = /^\s*(?:k|nghìn|ngàn|triệu|tỷ|tỉ|đ|vnđ|vnd|₫)(?![\p{L}\p{N}])/iu;
+
+/** Numeric values written as digits, including decimals and grouped thousands. */
+function digitsIn(text: string): number[] {
+  const values: number[] = [];
+
+  for (const match of text.matchAll(/\d[\d.,]*/gu)) {
+    const raw = match[0].replace(/[.,]$/, '');
+
+    // "399K" is 399,000, not 399. Leaving it to moneyIn avoids reporting the
+    // same figure twice at two different magnitudes, where the bare reading
+    // would be both wrong and the one the caller sees first.
+    const rest = text.slice(match.index + match[0].length);
+    if (UNIT_SUFFIX.test(rest)) continue;
+
+    // "399.000" is three hundred and ninety-nine thousand in Vietnamese
+    // convention, whereas "15.6" is a decimal. Groups of exactly three digits
+    // after the separator mark a thousands separator.
+    const asGrouped = raw.replace(/[.,](?=\d{3}\b)/g, '');
+    const normalized = asGrouped.replace(',', '.');
+
+    const value = Number.parseFloat(normalized);
+    if (Number.isFinite(value)) values.push(value);
+  }
+
+  return values;
+}
+
+/**
+ * Above this, a figure is treated as a price and gets the rounding tolerance
+ * below. Beneath it a figure is a specification, where 15.6 inches is simply
+ * not 16 inches and only an exact match will do.
+ */
+const PRICE_THRESHOLD = 1000;
+
+function isNumberAllowed(value: number, allowedNumbers: ReadonlySet<number>): boolean {
+  for (const allowed of allowedNumbers) {
+    if (allowed === value) return true;
+
+    if (allowed >= PRICE_THRESHOLD && value >= PRICE_THRESHOLD) {
+      if (Math.abs(value - allowed) / allowed <= PRICE_TOLERANCE) return true;
+    }
+  }
+  return false;
+}
+
+/** Every number info.json supports, from any field - not only the price. */
+function buildNumberWhitelist(info: ProductInfo | null): Set<number> {
+  const numbers = new Set<number>();
+  if (!info) return numbers;
+
+  const harvest = (value: string | number | undefined) => {
+    if (value === undefined) return;
+    if (typeof value === 'number') {
+      numbers.add(value);
+      return;
+    }
+    for (const found of digitsIn(value)) numbers.add(found);
+  };
+
+  harvest(info.price);
+  harvest(info.name);
+  harvest(info.category);
+  harvest(info.brand);
+  for (const feature of info.features ?? []) harvest(feature);
+  for (const audience of info.targetAudience ?? []) harvest(audience);
+
+  // A price of 399000 is also spoken as "399 nghìn", so the shorthand counts as
+  // the same sourced fact rather than a new claim.
+  if (info.price !== undefined) {
+    const price = typeof info.price === 'number' ? info.price : digitsIn(info.price)[0];
+    if (price !== undefined && price >= 1000) {
+      numbers.add(price / 1000);
+      numbers.add(Math.round(price / 1000));
+    }
+  }
+
+  return numbers;
 }
 
 /**

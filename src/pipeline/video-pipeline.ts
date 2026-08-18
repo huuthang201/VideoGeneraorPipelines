@@ -23,6 +23,7 @@ import { renderThumbnail, renderVideo } from '../video/renderer';
 import { validateOutput } from '../video/validator';
 import { computeInputHash, canSkip, loadOrCreateJob, markFailed, updateJob } from './job-store';
 import { FileCache } from '../utils/cache';
+import { LocalDriveStorageProvider } from '../storage/local-drive.provider';
 import { RETRY_BUDGETS, withRetry } from '../utils/retry';
 
 export const PIPELINE_VERSION = '1.0.0';
@@ -66,11 +67,20 @@ export interface RunPipelineOptions {
   reuseVoice?: boolean;
   /** Placeholder narration for offline work. Stamps job.devMock. */
   useMockTts?: boolean;
+  /**
+   * Copy the finished output to DRIVE_ROOT/03_OUTPUT when the job succeeds.
+   * On by default: leaving the last hop to a human (or to an agent following a
+   * checklist) is how a rendered video ends up sitting in runtime/ where nobody
+   * looks for it.
+   */
+  publish?: boolean;
   storyboardSource?: StoryboardSource;
 }
 
 export interface PipelineResult {
   status: 'completed' | 'skipped';
+  /** Where the deliverables were published, or null when publishing was off. */
+  publishedTo?: string | null;
   mode: PipelineMode;
   job: Job;
   paths: JobPaths;
@@ -297,8 +307,26 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       // that folder, so a stale entry would report a healthy project as broken.
       await clearErrorFile(config, projectId);
 
-      logger.done(`Done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s → ${paths.output}`);
-      return { status: 'completed', mode, job, paths, timeline };
+      // ---- 10. Publish (spec §46) -----------------------------------------
+      let publishedTo: string | null = null;
+
+      if (options.publish ?? true) {
+        if (tts.isMock) {
+          // A silent placeholder render must never reach the folder people
+          // publish from (plan §2.3). It stays in runtime/ for inspection.
+          logger.warn('Not publishing: this render uses mock narration (devMock)');
+        } else {
+          job = await updateJob(paths, job, { status: 'UPLOADING', stage: 'publish' });
+          const storage = new LocalDriveStorageProvider(config.driveRoot);
+          const target = await storage.publish(projectId, paths.output);
+          publishedTo = target.describe;
+          logger.done(`Published → ${publishedTo}`);
+          job = await updateJob(paths, job, { status: 'DONE', stage: 'complete' });
+        }
+      }
+
+      logger.done(`Done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s → ${publishedTo ?? paths.output}`);
+      return { status: 'completed', mode, job, paths, timeline, publishedTo };
     } finally {
       // Always unstage, even on failure: leftovers would be picked up by the
       // next render of the same project and hide a missing input.
@@ -401,6 +429,11 @@ async function synthesize(args: {
       }),
     {
       attempts: RETRY_BUDGETS.tts,
+      // A second is far too eager for an endpoint that is refusing requests;
+      // backing off in seconds rather than milliseconds is what actually lets
+      // it recover before the next attempt.
+      initialDelayMs: 3000,
+      maxDelayMs: 20_000,
       onRetry: (err, attempt, delayMs) =>
         logger.warn(
           `TTS attempt ${attempt} failed (${err instanceof Error ? err.message : String(err)}); ` +

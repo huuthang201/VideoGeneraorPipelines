@@ -9,6 +9,7 @@ import { validateOutput } from '../video/validator';
 import { isPipelineError } from '../domain/errors';
 import { prepareProject } from './prepare';
 import { ClaudeCodeStoryboardProvider } from '../ai/claude-code.provider';
+import { LocalDriveStorageProvider } from '../storage/local-drive.provider';
 
 /**
  * The single entry point (spec §57). Everything - a person at a terminal,
@@ -45,8 +46,9 @@ program
   .argument('<job>', 'path to a job folder, or a project id under runtime/jobs')
   .option('--force', 'rebuild even when nothing changed', false)
   .option('--mock-tts', 'use placeholder narration instead of calling Edge TTS', false)
+  .option('--no-publish', 'leave the output in runtime/jobs instead of copying to 03_OUTPUT')
   .description('Run the full pipeline for one project')
-  .action(async (job: string, opts: { force: boolean; mockTts: boolean }) => {
+  .action(async (job: string, opts: { force: boolean; mockTts: boolean; publish: boolean }) => {
     const config = loadConfig();
     const projectId = resolveProjectId(job, config.jobsDir);
     const logger = createLogger({ level: config.logLevel }).forProject(projectId);
@@ -59,10 +61,49 @@ program
           logger,
           force: opts.force,
           useMockTts: opts.mockTts,
+          publish: opts.publish,
           storyboardSource: new ClaudeCodeStoryboardProvider(config, logger),
         }),
       logger,
     );
+  });
+
+program
+  .command('publish')
+  .argument('<job>', 'path to a job folder, or a project id under runtime/jobs')
+  .description('Copy an already-rendered project to DRIVE_ROOT/03_OUTPUT')
+  .action(async (job: string) => {
+    const config = loadConfig();
+    const projectId = resolveProjectId(job, config.jobsDir);
+    const logger = createLogger({ level: config.logLevel }).forProject(projectId);
+
+    await run(async () => {
+      const paths = jobPaths(config.jobsDir, projectId);
+      const storage = new LocalDriveStorageProvider(config.driveRoot);
+      await storage.ensureLayout();
+      const target = await storage.publish(projectId, paths.output);
+      logger.done(`Published → ${target.describe}`);
+    }, logger);
+  });
+
+program
+  .command('list')
+  .description('Show every project in 01_INPUT and whether it has been published')
+  .action(async () => {
+    const config = loadConfig();
+    const storage = new LocalDriveStorageProvider(config.driveRoot);
+    await storage.ensureLayout();
+
+    const projects = await storage.listPending();
+    if (projects.length === 0) {
+      console.log(`No projects in ${config.driveRoot}/01_INPUT`);
+      return;
+    }
+
+    for (const projectId of projects) {
+      const published = await storage.isPublished(projectId);
+      console.log(`  ${published ? 'DONE   ' : 'PENDING'}  ${projectId}`);
+    }
   });
 
 program

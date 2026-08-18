@@ -12,6 +12,10 @@ runtime/
 # render output
 out/
 
+# the Drive working area: user photos in, generated videos out.
+# Nothing here is source, and the videos are tens of megabytes each.
+workspace/
+
 # per-job assets staged into the Remotion bundle at render time
 public/jobs/
 

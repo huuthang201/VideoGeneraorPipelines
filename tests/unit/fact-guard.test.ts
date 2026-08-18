@@ -225,6 +225,87 @@ describe('Vietnamese word boundaries', () => {
   });
 });
 
+describe('specifications without a price', () => {
+  // Regression suite for a false positive found on a real product. A backpack
+  // whose info.json listed "Ngăn laptop 15.6 inch" but carried no price had its
+  // correctly-sourced "mười lăm phẩy sáu inch" rejected, with a message
+  // complaining about a price nobody had mentioned. Strict mode was keyed on
+  // the absence of a price rather than the absence of any sourced figure, so
+  // every product with specs and no price was unusable.
+  const SPECS_NO_PRICE: ProductInfo = {
+    name: 'Balo laptop chống nước Xmark',
+    category: 'Balo laptop',
+    features: ['Chống nước', 'Ngăn laptop 15.6 inch', 'Cổng sạc USB'],
+  };
+
+  it('accepts a sourced specification spoken aloud', () => {
+    const result = checkFacts(
+      draft({
+        scenes: [
+          { narration: 'Ngăn riêng vừa laptop mười lăm phẩy sáu inch.' },
+          {},
+          {},
+        ],
+      }),
+      SPECS_NO_PRICE,
+    );
+
+    expect(result.violations).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts the same specification written in digits', () => {
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Ngăn laptop 15.6 inch.' }, {}, {}] }),
+      SPECS_NO_PRICE,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('still rejects a specification that was never sourced', () => {
+    // The guard must not have been loosened into uselessness: 17 inches is not
+    // in info.json and must still be caught.
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Ngăn laptop mười bảy inch.' }, {}, {}] }),
+      SPECS_NO_PRICE,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('still rejects an invented price for a product that has none', () => {
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Giá chỉ ba trăm chín chín nghìn.' }, {}, {}] }),
+      SPECS_NO_PRICE,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.violations[0]!.kind).toBe('price');
+  });
+});
+
+describe('everyday words that are also numerals', () => {
+  // "một" is the article, "không" is negation, "năm" is "year". Reading these
+  // as stated figures made ordinary narration fail the guard.
+  const INFO_NO_NUMBERS: ProductInfo = { name: 'Tai nghe', category: 'Tai nghe' };
+
+  it.each([
+    'Một chiếc tai nghe rất đáng thử.',
+    'Không có gì phải phàn nàn cả.',
+    'Năm nay mẫu này bán khá chạy.',
+    'Ba mẹ mình cũng thích dùng cái này.',
+  ])('does not treat "%s" as stating a figure', (narration) => {
+    const result = checkFacts(draft({ scenes: [{ narration }, {}, {}] }), INFO_NO_NUMBERS);
+    expect(result.ok).toBe(true);
+  });
+
+  it('still catches a deliberate multi-word figure', () => {
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Pin dùng được hai mươi giờ.' }, {}, {}] }),
+      INFO_NO_NUMBERS,
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
 describe('fact guard feedback', () => {
   it('names the scene and field so a retry can be targeted', () => {
     const result = checkFacts(

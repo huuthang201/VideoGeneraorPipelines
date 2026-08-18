@@ -23,7 +23,16 @@ export interface RetryOptions {
 /** Per-stage budgets from spec §55. */
 export const RETRY_BUDGETS = {
   claude: 2,
-  tts: 2,
+  /**
+   * Edge TTS gets more attempts than anything else, and slower ones.
+   *
+   * It is an unofficial endpoint that intermittently answers with
+   * NoAudioReceived for text it will happily synthesise a moment later -
+   * observed here on a 484-character narration that failed twice and then
+   * succeeded unchanged. Since Vietnamese narration is mandatory (spec §7),
+   * a transient refusal otherwise fails the whole job.
+   */
+  tts: 4,
   render: 2, // one render plus the single retry spec §55 allows
   backgroundRemoval: 1, // no retry; the provider falls back to the original
   outputCopy: 3,

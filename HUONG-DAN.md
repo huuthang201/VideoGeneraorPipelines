@@ -47,13 +47,24 @@ tới**.
 npm run generate -- ten-san-pham
 ```
 
-Xong. Kết quả nằm ở `runtime/jobs/ten-san-pham/output/`:
+Xong. Video tự động được copy sang `workspace/AI-Shorts/03_OUTPUT/ten-san-pham/`:
 
 ```
 video.mp4  thumbnail.jpg  storyboard.json  script.txt  captions.srt  job.json
 ```
 
-Mất khoảng 70–110 giây, trong đó phần lớn là chờ Claude viết kịch bản.
+Bản gốc vẫn nằm ở `runtime/jobs/ten-san-pham/output/` để bạn xem lại. Mất khoảng
+60–110 giây, phần lớn là chờ Claude viết kịch bản.
+
+Xem tình trạng mọi project:
+
+```bash
+npm run video-maker -- list
+```
+```
+  DONE     baseus-ma10
+  PENDING  san-pham-moi
+```
 
 ---
 
@@ -134,9 +145,15 @@ npm run generate        -- <id> [--force] [--mock-tts]
 npm run render          -- <id>          # 0 Claude, 0 TTS
 npm run regenerate      -- <id>          # gọi lại Claude
 npm run generate-all                     # tất cả project trong runtime/jobs
+npm run video-maker -- list              # project nào xong, project nào chưa
+npm run video-maker -- publish <id>      # copy thủ công sang 03_OUTPUT
 npm run check           -- <file.mp4>    # kiểm tra một file output
 npm run studio                           # mở Remotion Studio để xem trực quan
 ```
+
+**`--no-publish`**: giữ kết quả trong `runtime/jobs`, không copy sang
+`03_OUTPUT`. Dùng khi còn đang thử nghiệm. Video chạy bằng `--mock-tts` **không
+bao giờ** được publish, kể cả khi bạn không đặt cờ này.
 
 **`--force`**: chạy lại dù input không đổi. Không có cờ này, chạy lần hai trên
 project không đổi sẽ bỏ qua trong dưới 1 giây.
