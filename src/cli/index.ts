@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import path from 'node:path';
-import { readdir, mkdir, rm } from 'node:fs/promises';
+import { readdir, mkdir, rm, rename } from 'node:fs/promises';
 import { loadConfig, jobPaths } from '../config/env';
 import { createLogger } from '../utils/logger';
 import { runPipeline } from '../pipeline/video-pipeline';
@@ -123,16 +123,34 @@ program
       // Only this command spends a Claude call by design; `generate` reuses an
       // existing storyboard and `render` never calls the model at all.
       const paths = jobPaths(config.jobsDir, projectId);
-      await rm(paths.storyboardJson, { force: true });
-      logger.step('Existing storyboard discarded');
+      const backup = `${paths.storyboardJson}.previous`;
 
-      await runPipeline({
-        projectId,
-        config,
-        logger,
-        force: true,
-        storyboardSource: new ClaudeCodeStoryboardProvider(config, logger),
-      });
+      // Set aside rather than delete. Deleting first meant a rejected
+      // regeneration left the project with no storyboard at all - strictly
+      // worse than the one it had been asked to improve on, and the working
+      // copy was gone.
+      const had = await rename(paths.storyboardJson, backup).then(
+        () => true,
+        () => false,
+      );
+      if (had) logger.step('Existing storyboard set aside');
+
+      try {
+        await runPipeline({
+          projectId,
+          config,
+          logger,
+          force: true,
+          storyboardSource: new ClaudeCodeStoryboardProvider(config, logger),
+        });
+        await rm(backup, { force: true });
+      } catch (err) {
+        if (had) {
+          await rename(backup, paths.storyboardJson).catch(() => {});
+          logger.warn('Regeneration failed; restored the previous storyboard');
+        }
+        throw err;
+      }
     }, logger);
   });
 

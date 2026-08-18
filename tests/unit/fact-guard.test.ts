@@ -306,6 +306,96 @@ describe('everyday words that are also numerals', () => {
   });
 });
 
+describe('digit sequences read aloud', () => {
+  // Regression suite for a false positive that failed a correct storyboard.
+  // "Thép không gỉ 304" is read aloud as "ba không bốn" - digit by digit, as
+  // anyone reads a model number. The parser took consecutive digit words as a
+  // compound number with elided tens and got 34, which is not in info.json, so
+  // a line whose 304 came straight from the product data was rejected.
+  const SPEC: ProductInfo = {
+    name: 'Bình giữ nhiệt',
+    features: ['Thép không gỉ 304', 'Giữ nóng 12 tiếng'],
+    price: 285000,
+  };
+
+  it('accepts a model number read digit by digit', () => {
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Thân thép không gỉ ba không bốn, chắc lắm.' }, {}, {}] }),
+      SPEC,
+    );
+    expect(result.violations).toEqual([]);
+  });
+
+  it('accepts the same number read as a compound', () => {
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Thép ba trăm lẻ bốn nha.' }, {}, {}] }),
+      SPEC,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('still rejects a spoken figure carrying a unit', () => {
+    // The loosening must not become a rubber stamp. A unit is what makes a
+    // number a claim, and "tám tiếng" contradicts the sourced 12 hours.
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Giữ nóng được tám tiếng thôi.' }, {}, {}] }),
+      SPEC,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('still rejects a spoken price', () => {
+    // A scale word sits inside the run, so this is caught by the run's own
+    // shape rather than by what follows it.
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Giá chỉ chín trăm nghìn nhé.' }, {}, {}] }),
+      SPEC,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.feedback).toMatch(/reads as|does not appear/);
+  });
+
+  it('allows a clock time, which claims nothing about the product', () => {
+    // "bảy giờ sáng" is when the narrator made tea, not a specification.
+    // Treating "giờ" as a unit failed three regenerations in a row on copy that
+    // was entirely accurate.
+    const result = checkFacts(
+      draft({
+        scenes: [
+          { narration: 'Pha trà lúc bảy giờ sáng, tám giờ tối vẫn còn nóng.' },
+          {},
+          {},
+        ],
+      }),
+      SPEC,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('still checks a duration, which is a specification', () => {
+    // "tiếng" is how a duration claim is actually written, and this one
+    // contradicts the sourced 12 hours.
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Giữ nóng được tám tiếng thôi.' }, {}, {}] }),
+      SPEC,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('allows a bare figure with no unit, by design', () => {
+    // A deliberate trade-off. "thử bảy tám lần" claims nothing about the
+    // product, and checking every unitless number against the product data
+    // failed good narration and burned a Claude retry each time. Prices and
+    // specifications always carry a unit or a scale word, so the protection
+    // that matters is unaffected.
+    const result = checkFacts(
+      draft({ scenes: [{ narration: 'Tôi thử bảy tám lần rồi mới tin.' }, {}, {}] }),
+      SPEC,
+    );
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe('fact guard feedback', () => {
   it('names the scene and field so a retry can be targeted', () => {
     const result = checkFacts(

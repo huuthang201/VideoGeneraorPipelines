@@ -43,6 +43,35 @@ const B_END = '(?![\\p{L}\\p{N}])';
 const u = (source: string): RegExp => new RegExp(source, 'giu');
 
 /**
+ * Words that mark a number as a product claim.
+ *
+ * The guard exists to stop invented specifications and prices, and those always
+ * carry a unit: hours, inches, millilitres, đồng. A number with no unit beside
+ * it is almost always incidental to the story - "thử một lần", "bảy giờ sáng",
+ * "ba mẹ tôi cũng dùng" - and checking those against the product data rejected
+ * perfectly good narration, burning a retry each time and eventually failing
+ * the job over copy that claimed nothing.
+ */
+const UNIT_CONTEXT = u(
+  `^\\s*(?:tiếng|ngày|tuần|tháng|inch|cm|mm|km|ml|lít|` +
+    `gram|kg|độ|watt|volt|mah|hz|khz|ghz|mb|gb|tb|megapixel|` +
+    `đồng|nghìn|ngàn|triệu|tỷ|phần trăm)${B_END}`,
+);
+
+/*
+ * Deliberately absent: giờ, phút, giây, năm.
+ *
+ * Vietnamese already separates these senses - "giờ" is a clock reading while
+ * "tiếng" is a duration - so including "giờ" made "bảy giờ sáng" look like a
+ * specification and failed narration that claimed nothing about the product.
+ * "năm" is worse still, meaning both "year" and "five".
+ *
+ * The cost is that an invented "giữ nóng tám giờ" now passes. The protection
+ * that matters is intact, because a real specification is written with "tiếng"
+ * or a physical unit, and the guard was failing far more good copy than bad.
+ */
+
+/**
  * Marketing claims that imply a commitment the seller has to honour. These are
  * flagged on sight: unlike a number, there is no version of info.json that
  * makes an invented free-shipping promise acceptable.
@@ -102,10 +131,28 @@ export function checkFacts(draft: StoryboardDraft, info: ProductInfo | null): Fa
       // A lone number word is almost always ordinary Vietnamese rather than a
       // figure, so only deliberate multi-word runs count. "mười lăm phẩy sáu"
       // is a measurement; the "một" in "một chiếc tai nghe" is an article.
-      ...spokenNumbersIn(field.text)
-        .filter((n) => n.tokens.length >= 2)
-        .map((n) => n.value),
     ];
+
+    // A spoken run is only a violation when *no* defensible reading of it is
+    // sourced. Committing to one reading rejects correct copy: "ba không bốn"
+    // is how 304 is read aloud, and insisting it means 34 failed a line whose
+    // 304 came straight from info.json.
+    // Two independent signals that a spoken figure is a product claim, and both
+    // are needed:
+    //
+    //   a unit beside it   - "tám tiếng" is a specification even though it is a
+    //                        single word, so a word-count rule alone misses it
+    //   more than one word - "ba trăm chín chín" is deliberate even with no unit
+    //
+    // Requiring both together rejected good narration; requiring either alone
+    // let real claims through. In strict mode - nothing numeric is sourced at
+    // all - the word-count signal is enough on its own, since there is nothing
+    // a figure could legitimately be quoting.
+    const spoken = spokenNumbersIn(field.text).filter((n) => {
+      const measured = statesAMeasurement(field.text, n.tokens);
+      if (measured) return true;
+      return strict && n.tokens.length >= 2;
+    });
 
     for (const value of stated) {
       if (isNumberAllowed(value, allowedNumbers)) continue;
@@ -121,6 +168,23 @@ export function checkFacts(draft: StoryboardDraft, info: ProductInfo | null): Fa
           ? `"${field.text}" states the figure ${value}, but info.json contains no numbers to support it. ` +
             'Describe what is visible in the photos instead.'
           : `The figure ${value} does not appear in info.json. Allowed values: ${[...allowedNumbers].join(', ')}.`,
+      });
+    }
+
+    for (const candidate of spoken) {
+      const readings = [candidate.value, ...candidate.alternates];
+      if (readings.some((r) => isNumberAllowed(r, allowedNumbers))) continue;
+
+      violations.push({
+        kind: candidate.value >= PRICE_THRESHOLD ? 'price' : 'number',
+        sceneId: field.sceneId,
+        field: field.name,
+        matched: candidate.tokens.join(' '),
+        message: strict
+          ? `"${candidate.tokens.join(' ')}" states a figure (${readings.join(' or ')}), but ` +
+            'info.json contains no numbers to support it.'
+          : `"${candidate.tokens.join(' ')}" reads as ${readings.join(' or ')}, none of which ` +
+            `appear in info.json. Allowed values: ${[...allowedNumbers].join(', ')}.`,
       });
     }
 
@@ -164,6 +228,27 @@ function moneyIn(text: string): number[] {
 
 /** Unit suffixes that change a figure's magnitude, so moneyIn must own them. */
 const UNIT_SUFFIX = /^\s*(?:k|nghìn|ngàn|triệu|tỷ|tỉ|đ|vnđ|vnd|₫)(?![\p{L}\p{N}])/iu;
+
+/** Scale words that make a run a magnitude in its own right - i.e. a price. */
+const MAGNITUDE_WORDS = new Set(['nghìn', 'ngàn', 'triệu', 'tỷ', 'tỉ']);
+
+/**
+ * True when a spoken figure is presented as a claim about the product.
+ *
+ * Two ways that happens, and the first is easy to miss: a scale word sits
+ * *inside* the number run ("ba trăm chín chín nghìn" is a single run), so
+ * looking only at what follows the run would let every spoken price through.
+ */
+function statesAMeasurement(text: string, tokens: readonly string[]): boolean {
+  const last = tokens[tokens.length - 1];
+  if (last && MAGNITUDE_WORDS.has(last)) return true;
+
+  const phrase = tokens.join(' ');
+  const index = text.toLowerCase().indexOf(phrase.toLowerCase());
+  if (index === -1) return true; // cannot tell; err on the side of checking
+
+  return UNIT_CONTEXT.test(text.slice(index + phrase.length));
+}
 
 /** Numeric values written as digits, including decimals and grouped thousands. */
 function digitsIn(text: string): number[] {

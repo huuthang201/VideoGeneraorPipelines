@@ -61,6 +61,16 @@ export interface SpokenNumber {
   value: number;
   /** The words that produced it, so callers can judge how deliberate it was. */
   tokens: string[];
+  /**
+   * Other defensible readings of the same words.
+   *
+   * A run of bare digit words is ambiguous and both readings occur in real
+   * narration: "ba không bốn" is how anyone reads the model number 304 aloud,
+   * but the same words as a compound number come to 34. A guard that commits to
+   * one reading rejects correctly-sourced copy - which is exactly what happened
+   * to a "thép không gỉ 304" line whose 304 was right there in info.json.
+   */
+  alternates: number[];
 }
 
 /**
@@ -87,8 +97,15 @@ export function spokenNumbersIn(text: string): SpokenNumber[] {
 
   const flush = () => {
     if (run.length > 0) {
-      const value = parseSpokenNumber(run);
-      if (value !== null) values.push({ value, tokens: [...run] });
+      // A run made only of structural words states no figure. "nghìn" on its
+      // own is the tail of "400 nghìn", where the digits were written as digits
+      // - reading it as the number 1000 invented a claim the text never made.
+      if (run.some((t) => DIGITS[t] !== undefined || t === 'mười')) {
+        const value = parseSpokenNumber(run);
+        if (value !== null) {
+          values.push({ value, tokens: [...run], alternates: alternateReadings(run) });
+        }
+      }
       run = [];
     }
   };
@@ -202,4 +219,27 @@ function parseInteger(tokens: readonly string[]): number | null {
 
   if (!sawAnything) return null;
   return total + group + (current ?? 0);
+}
+
+/**
+ * Readings other than the compound-number one.
+ *
+ * Only digit sequences are ambiguous: once a run contains a scale word
+ * ("trăm", "nghìn", "mươi") its structure is explicit and there is nothing to
+ * second-guess. So this returns the digit-by-digit concatenation, and only when
+ * every token is a bare digit.
+ */
+function alternateReadings(tokens: readonly string[]): number[] {
+  const digits: number[] = [];
+
+  for (const token of tokens) {
+    const digit = DIGITS[token];
+    if (digit === undefined) return [];
+    digits.push(digit);
+  }
+
+  if (digits.length < 2) return [];
+
+  const concatenated = Number.parseInt(digits.join(''), 10);
+  return Number.isFinite(concatenated) ? [concatenated] : [];
 }

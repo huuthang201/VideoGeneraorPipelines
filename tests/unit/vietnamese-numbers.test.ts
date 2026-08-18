@@ -76,7 +76,10 @@ describe('spokenNumbersIn', () => {
     // Callers need this to tell a deliberate figure from an ordinary word that
     // happens to be a numeral: "năm" is usually "year", "một" usually "a".
     const [lone] = spokenNumbersIn('năm nay');
-    expect(lone).toEqual({ value: 5, tokens: ['năm'] });
+    expect(lone!.value).toBe(5);
+    expect(lone!.tokens).toEqual(['năm']);
+    // A single word has no second reading to offer.
+    expect(lone!.alternates).toEqual([]);
 
     const [deliberate] = spokenNumbersIn('mười lăm phẩy sáu inch');
     expect(deliberate!.tokens.length).toBeGreaterThan(1);
@@ -88,5 +91,27 @@ describe('spokenNumbersIn', () => {
     for (const n of spokenNumbersIn('Một câu bình thường không có con số nào.')) {
       expect(n.tokens.length).toBe(1);
     }
+  });
+});
+
+describe('alternate readings', () => {
+  it('offers the digit-by-digit reading of a bare digit run', () => {
+    // "ba không bốn" is how a model number like 304 is read aloud. As a
+    // compound number the same words come to 34, so both readings have to
+    // reach the caller or a correctly-sourced spec gets rejected.
+    const [run] = spokenNumbersIn('thép ba không bốn');
+    expect(run!.alternates).toContain(304);
+  });
+
+  it('offers no alternate once a scale word makes the structure explicit', () => {
+    // "ba trăm lẻ bốn" can only mean 304; there is nothing to second-guess.
+    const [run] = spokenNumbersIn('ba trăm lẻ bốn');
+    expect(run!.value).toBe(304);
+    expect(run!.alternates).toEqual([]);
+  });
+
+  it('concatenates longer digit runs', () => {
+    const [run] = spokenNumbersIn('một hai ba bốn');
+    expect(run!.alternates).toContain(1234);
   });
 });
