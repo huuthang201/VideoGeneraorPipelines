@@ -7,6 +7,7 @@ import {
   type StoryboardDraft,
 } from '../domain/storyboard';
 import type { ProductInfo } from '../domain/project';
+import type { Brief } from '../domain/brief';
 import type { AppConfig } from '../config/env';
 import type { Logger } from '../utils/logger';
 import { ERROR_CODES, PipelineError } from '../domain/errors';
@@ -38,6 +39,7 @@ export interface GenerateInput {
   previewDir: string;
   info: ProductInfo | null;
   assetFilenames: string[];
+  brief?: Brief | null;
 }
 
 /**
@@ -86,6 +88,11 @@ export class ClaudeCodeStoryboardProvider {
       defaultStyle: this.config.video.style,
       femaleVoice: VIETNAMESE_VOICES.female,
       maleVoice: VIETNAMESE_VOICES.male,
+      brief: input.brief,
+      allowBroll: this.config.image.engine !== 'none',
+      // Derived from the ceiling the pipeline enforces, so the model is told
+      // the limit up front rather than discovering it via a rejected job.
+      maxBrollScenes: Math.max(1, Math.floor(6 * this.config.image.maxBrollRatio)),
     });
 
     let prompt = basePrompt;

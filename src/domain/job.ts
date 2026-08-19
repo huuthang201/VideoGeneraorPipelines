@@ -49,6 +49,16 @@ export const JobSchema = z.strictObject({
    */
   devMock: z.boolean().default(false),
   inputHash: z.string().nullable().default(null),
+  /**
+   * Which scenes used a generated image, and the prompt behind each.
+   *
+   * Recorded because a viewer cannot tell generated imagery from a photograph.
+   * If a claim is ever disputed, this is the record of what the video actually
+   * showed and why.
+   */
+  generatedImages: z
+    .array(z.strictObject({ sceneId: z.string(), prompt: z.string(), filename: z.string() }))
+    .default([]),
   error: JobErrorSchema.nullable().default(null),
 });
 
@@ -66,6 +76,7 @@ export function createJob(projectId: string): Job {
     scenes: null,
     devMock: false,
     inputHash: null,
+    generatedImages: [],
     error: null,
   };
 }

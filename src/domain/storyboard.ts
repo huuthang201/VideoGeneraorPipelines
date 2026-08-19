@@ -113,6 +113,10 @@ export function checkStoryboardStructure(
     if (seenIds.has(scene.id)) problems.push(`Duplicate scene id "${scene.id}".`);
     seenIds.add(scene.id);
 
+    // A b-roll scene has no source photo to check: its image is generated
+    // later from imagePrompt, which the schema has already required.
+    if (scene.type === 'broll') continue;
+
     if (!availableAssets.includes(scene.asset)) {
       problems.push(
         `Scene "${scene.id}" references asset "${scene.asset}", which is not one of the ` +

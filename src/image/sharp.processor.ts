@@ -110,6 +110,7 @@ export async function processImages(options: ProcessImagesOptions): Promise<Proc
         aspectRatio: info.width / info.height,
         orientation: classifyOrientation(info.width, info.height),
         cutoutPath: null,
+        generated: false,
       });
     } catch (err) {
       skipped.push({

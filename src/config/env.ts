@@ -34,6 +34,15 @@ const EnvSchema = z.object({
   TTS_PITCH: z.string().default('+25Hz'),
   PYTHON_BIN: z.string().default('./.venv/bin/python3'),
 
+  /** `none` disables b-roll entirely; `comfyui` generates it locally. */
+  IMAGE_ENGINE: z.enum(['comfyui', 'none']).default('none'),
+  COMFYUI_SERVER: z.string().default('http://127.0.0.1:8188'),
+  /**
+   * Ceiling on the share of scenes that may be generated. Most of a product
+   * video should be the actual product.
+   */
+  IMAGE_MAX_BROLL_RATIO: z.coerce.number().min(0).max(1).default(0.4),
+
   AI_PROVIDER: z.enum(['claude-code']).default('claude-code'),
   CLAUDE_BIN: z.string().default('claude'),
   CLAUDE_MODEL: z.string().default('sonnet'),
@@ -74,6 +83,7 @@ export interface AppConfig {
     vieneuPythonBin: string;
   };
   ai: { provider: 'claude-code'; claudeBin: string; model: string };
+  image: { engine: 'comfyui' | 'none'; comfyuiServer: string; maxBrollRatio: number };
   video: {
     width: number;
     height: number;
@@ -119,6 +129,11 @@ export function loadConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfi
       vieneuPythonBin: path.resolve(env.VIENEU_PYTHON_BIN),
     },
     ai: { provider: env.AI_PROVIDER, claudeBin: env.CLAUDE_BIN, model: env.CLAUDE_MODEL },
+    image: {
+      engine: env.IMAGE_ENGINE,
+      comfyuiServer: env.COMFYUI_SERVER,
+      maxBrollRatio: env.IMAGE_MAX_BROLL_RATIO,
+    },
     video: {
       width: env.VIDEO_WIDTH,
       height: env.VIDEO_HEIGHT,
@@ -145,11 +160,16 @@ export function jobPaths(jobsDir: string, projectId: string) {
     images: path.join(root, 'images'),
     preview: path.join(root, 'preview'),
     audio: path.join(root, 'audio'),
+    generated: path.join(root, 'generated'),
     output: path.join(root, 'output'),
     infoJson: path.join(root, 'info.json'),
+    briefJson: path.join(root, 'brief.json'),
     storyboardJson: path.join(root, 'storyboard.json'),
+    storyboardVersions: path.join(root, 'storyboard-versions'),
     timelineJson: path.join(root, 'timeline.json'),
     jobJson: path.join(root, 'job.json'),
+    progressJson: path.join(root, 'progress.json'),
+    lockFile: path.join(root, '.lock'),
     videoMp4: path.join(root, 'output', 'video.mp4'),
     thumbnailJpg: path.join(root, 'output', 'thumbnail.jpg'),
     scriptTxt: path.join(root, 'output', 'script.txt'),

@@ -21,16 +21,49 @@ Three layers, and the boundaries are load-bearing:
 ```bash
 npm run setup:python                     # one-time: venv + edge-tts
 npx tsx src/cli/index.ts prepare <dir>   # copy in, process images, make AI previews
+npx tsx src/cli/index.ts suggest-brief <id>        # draft a context+hook from the photos -> brief.json
+npx tsx src/cli/index.ts generate-storyboard <id>  # storyboard only, no TTS/render; archives a version
 npx tsx src/cli/index.ts generate <id>   # full pipeline (calls Claude if no storyboard)
 npx tsx src/cli/index.ts render <id>     # re-render only: no Claude, no TTS
-npx tsx src/cli/index.ts regenerate-content <id>   # discard storyboard, ask Claude again
+npx tsx src/cli/index.ts regenerate-content <id>   # discard storyboard, ask Claude again, then render
 npx tsx src/cli/index.ts generate-all    # every project under runtime/jobs
 npx tsx src/cli/index.ts validate <mp4>  # check an output file
-npm test && npm run typecheck
+npm run typecheck
+npm run ui                               # local web UI (server/) - see below
 ```
 
-Node 22 is required (`.nvmrc`); `sharp` and `chokidar` both refuse older
-versions and Remotion is only validated on LTS.
+Node 22 is required (`.nvmrc`); `sharp` refuses older versions and Remotion
+is only validated on LTS. There is no automated test suite in this repo -
+verify changes by running the pipeline and by `npm run typecheck`.
+
+## Local web UI
+
+`npm run ui` starts a small Express server (`server/`, port `UI_PORT` or 4000)
+that serves a plain HTML/JS page (`server/public/`, no build step, no
+framework) for managing projects by hand instead of through the Drive folder
+dance. It is a second front door onto the same `runtime/jobs/<id>` directories
+and the same CLI commands above - not a separate backend or database. Every
+"heavy" action (`prepare`, `suggest-brief`, `generate-storyboard`, `generate`)
+is a spawned `tsx src/cli/index.ts ...` child process; the server only reads
+`job.json`/`progress.json`/`.lock` directly off disk to report status, and owns
+one small file the engine doesn't know about: `meta.json` (the UI's display
+name for a project, since `job.json`'s schema is `strictObject`).
+
+Two engine concepts exist only to support this UI and are otherwise inert:
+
+- **`brief.json`** (`src/domain/brief.ts`) - optional `{ context, hook }` free
+  text a user types (or asks `suggest-brief` to draft from the photos) before
+  generating a storyboard. It is never checked by fact-guard; it only steers
+  the prompt in `src/ai/prompts/generate-storyboard.ts`.
+- **Storyboard versions** (`src/pipeline/storyboard-store.ts`) - every
+  `generate-storyboard`/`regenerate-content` run archives a timestamped copy
+  under `runtime/jobs/<id>/storyboard-versions/`, on top of the single active
+  `storyboard.json` the pipeline actually reads. The UI lists these so a
+  regeneration is never destructive.
+
+`.lock` (`src/pipeline/lock.ts`) marks a job directory as currently being
+processed, purely so the UI (or a person) can tell a job is busy and run
+several projects concurrently without two processes racing the same directory.
 
 ## The Drive workflow
 
@@ -95,6 +128,7 @@ src/image/       Sharp processing, previews, background removal
 src/pipeline/    the deterministic pipeline, timeline builder, job state
 src/video/       bundling, asset staging, rendering, ffprobe, validation
 src/remotion/    the single ShortVideo composition, scenes, themes
+server/          local web UI: Express routes + plain HTML/JS (no build step)
 runtime/         jobs, cache, logs (gitignored)
 ```
 

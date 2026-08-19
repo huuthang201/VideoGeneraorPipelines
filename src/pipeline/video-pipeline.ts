@@ -6,7 +6,8 @@ import {
   withDerivedNarration,
   type Storyboard,
 } from '../domain/storyboard';
-import { ProductInfoSchema, type ProductInfo } from '../domain/project';
+import { ProductInfoSchema, type ProcessedImage, type ProductInfo } from '../domain/project';
+import { BriefSchema, type Brief } from '../domain/brief';
 import { TimelineSchema, type Timeline } from '../domain/timeline';
 import { ERROR_CODES, PipelineError } from '../domain/errors';
 import type { Job } from '../domain/job';
@@ -23,8 +24,12 @@ import { assetSrc, stageAssets } from '../video/asset-stage';
 import { renderThumbnail, renderVideo } from '../video/renderer';
 import { validateOutput } from '../video/validator';
 import { computeInputHash, canSkip, loadOrCreateJob, markFailed, updateJob } from './job-store';
+import { saveStoryboardVersion } from './storyboard-store';
+import { acquireLock, releaseLock } from './lock';
 import { FileCache } from '../utils/cache';
 import { LocalDriveStorageProvider } from '../storage/local-drive.provider';
+import { ComfyUIImageProvider } from '../image/generation/comfyui.provider';
+import { generateBroll } from './stages/generate-broll';
 import { RETRY_BUDGETS, withRetry } from '../utils/retry';
 
 export const PIPELINE_VERSION = '1.0.0';
@@ -57,6 +62,7 @@ export interface StoryboardSource {
     previewDir: string;
     info: ProductInfo | null;
     assetFilenames: string[];
+    brief: Brief | null;
   }): Promise<Storyboard>;
 }
 
@@ -79,7 +85,15 @@ export interface RunPipelineOptions {
   publish?: boolean;
   /** Overrides the configured voice for this run, e.g. from --voice. */
   voiceOverride?: string;
+  /** Skips b-roll generation, building from the supplied photographs only. */
+  noBroll?: boolean;
   storyboardSource?: StoryboardSource;
+  /**
+   * Stops right after a storyboard exists (no TTS, no render). Used by the
+   * `generate-storyboard` CLI command so the UI can offer "create the script"
+   * as a separate, much cheaper action from "make the video".
+   */
+  storyboardOnly?: boolean;
 }
 
 export interface PipelineResult {
@@ -98,6 +112,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
   const startedAt = Date.now();
 
   let job = await loadOrCreateJob(paths, projectId);
+  await acquireLock(paths).catch(() => {});
 
   try {
     await assertExists(paths.root, `Job folder not found: ${paths.root}`);
@@ -105,6 +120,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
     // ---- 1. Inputs -------------------------------------------------------
     const sourceDir = (await exists(paths.source)) ? paths.source : paths.root;
     const info = await readInfoJson(paths.infoJson);
+    const brief = await readBriefJson(paths.briefJson);
     const existingStoryboardRaw = await readFile(paths.storyboardJson, 'utf8').catch(() => null);
 
     const mode: PipelineMode = existingStoryboardRaw
@@ -176,11 +192,86 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
         previewDir: paths.preview,
         info,
         assetFilenames: images.map((i) => i.filename),
+        brief,
       });
 
-      await writeFile(paths.storyboardJson, `${JSON.stringify(storyboard, null, 2)}\n`, 'utf8');
+      const storyboardRaw = `${JSON.stringify(storyboard, null, 2)}\n`;
+      await writeFile(paths.storyboardJson, storyboardRaw, 'utf8');
+      await saveStoryboardVersion(paths, storyboardRaw).catch((err) =>
+        logger.warn(`Could not archive storyboard version: ${err instanceof Error ? err.message : String(err)}`),
+      );
       logger.done(`Storyboard created (${storyboard.scenes.length} scenes)`);
     }
+
+    if (options.storyboardOnly) {
+      // Clears any error left over from a previous failed run, same as the
+      // full-pipeline DONE path - otherwise a job that fails once and then
+      // succeeds at just the storyboard keeps reporting the old failure.
+      job = await updateJob(paths, job, {
+        status: 'STORYBOARD_READY',
+        stage: 'generate-storyboard',
+        error: null,
+      });
+      logger.done(`Done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s → storyboard only`);
+      return { status: 'completed', mode, job, paths };
+    }
+
+    // ---- 3b. B-roll ------------------------------------------------------
+    // Before TTS so a failure here costs nothing but time: narration is the
+    // expensive, network-dependent step and there is no point spending it on a
+    // job whose imagery cannot be assembled.
+    let generatedImages: ProcessedImage[] = [];
+    let generatedRecord: { sceneId: string; prompt: string; filename: string }[] = [];
+
+    const wantsBroll = storyboard.scenes.some((s) => s.type === 'broll');
+
+    if (wantsBroll && (options.noBroll || config.image.engine === 'none')) {
+      throw new PipelineError(
+        ERROR_CODES.IMAGE_GENERATION_UNAVAILABLE,
+        'generate-broll',
+        `The storyboard has ${storyboard.scenes.filter((s) => s.type === 'broll').length} b-roll ` +
+          'scene(s) but image generation is off. Set IMAGE_ENGINE=comfyui, or regenerate the ' +
+          'storyboard without b-roll.',
+      );
+    }
+
+    if (wantsBroll) {
+      job = await updateJob(paths, job, { status: 'IMAGE_PROCESSING', stage: 'generate-broll' });
+
+      const imageProvider = new ComfyUIImageProvider({
+        pythonBin: 'python3',
+        serverUrl: config.image.comfyuiServer,
+        info,
+        onLog: (message) => logger.debug(message),
+      });
+
+      if (!(await imageProvider.isAvailable())) {
+        throw new PipelineError(
+          ERROR_CODES.IMAGE_GENERATION_UNAVAILABLE,
+          'generate-broll',
+          `ComfyUI is not running at ${config.image.comfyuiServer}.\n` +
+            'Start it with:  cd ~/ComfyUI && ./venv/bin/python3 main.py\n' +
+            'Or run with --no-broll to build from the supplied photographs only.',
+        );
+      }
+
+      const broll = await generateBroll({
+        storyboard,
+        info,
+        outDir: paths.generated,
+        cacheDir: path.join(config.runtimeDir, 'cache'),
+        provider: imageProvider,
+        logger,
+        maxRatio: config.image.maxBrollRatio,
+      });
+
+      generatedImages = broll.images;
+      generatedRecord = broll.record;
+      storyboard = broll.storyboard;
+      logger.done(`B-roll ready (${broll.images.length} generated)`);
+    }
+
+    const allImages = [...images, ...generatedImages];
 
     // ---- 4. Narration ----------------------------------------------------
     job = await updateJob(paths, job, { status: 'TTS_GENERATING', stage: 'generate-tts' });
@@ -207,18 +298,23 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
     const staged = await stageAssets({
       bundleLocation,
       projectId,
-      directories: { images: paths.images, audio: paths.audio },
+      directories: { images: paths.images, audio: paths.audio, generated: paths.generated },
     });
 
     try {
       // ---- 6. Timeline ---------------------------------------------------
       const { timeline, diagnostics } = buildTimeline({
         storyboard,
-        images,
+        images: allImages,
         voiceSrc: assetSrc(staged.publicPrefix, 'audio', path.basename(tts.audioPath)),
         voiceDurationSec: tts.duration,
         words: tts.words,
-        imageSrcFor: (filename) => assetSrc(staged.publicPrefix, 'images', filename),
+        // Generated files live in their own directory inside the staged
+        // bundle, so the two sources cannot collide on a filename.
+        imageSrcFor: (filename) =>
+          filename.startsWith('broll-')
+            ? assetSrc(staged.publicPrefix, 'generated', filename)
+            : assetSrc(staged.publicPrefix, 'images', filename),
       });
 
       TimelineSchema.parse(timeline);
@@ -248,7 +344,19 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       // fails to start under memory pressure, and re-running is far cheaper
       // than losing the Claude call and the TTS work already done.
       await withRetry(
-        () => renderVideo({ bundleLocation, timeline, outputPath: paths.videoMp4 }),
+        () =>
+          renderVideo({
+            bundleLocation,
+            timeline,
+            outputPath: paths.videoMp4,
+            onProgress: (progress) => {
+              void writeFile(
+                paths.progressJson,
+                JSON.stringify({ ...progress, updatedAt: new Date().toISOString() }),
+                'utf8',
+              ).catch(() => {});
+            },
+          }),
         {
           attempts: RETRY_BUDGETS.render,
           initialDelayMs: 2000,
@@ -316,6 +424,7 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
         scenes: storyboard.scenes.length,
         devMock: tts.isMock,
         inputHash,
+        generatedImages: generatedRecord,
         error: null,
       });
 
@@ -373,6 +482,8 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
 
     await writeErrorFile(config, projectId, pipelineError);
     throw pipelineError;
+  } finally {
+    await releaseLock(paths).catch(() => {});
   }
 }
 
@@ -549,7 +660,7 @@ async function readWordTimings(paths: JobPaths): Promise<TTSResult['words']> {
   }
 }
 
-async function readInfoJson(filePath: string): Promise<ProductInfo | null> {
+export async function readInfoJson(filePath: string): Promise<ProductInfo | null> {
   const raw = await readFile(filePath, 'utf8').catch(() => null);
   if (raw === null) return null;
 
@@ -562,6 +673,22 @@ async function readInfoJson(filePath: string): Promise<ProductInfo | null> {
     );
   }
   return parsed.data;
+}
+
+/**
+ * brief.json is UI-authored free text, not a fact source, so a malformed file
+ * is treated as "no brief" rather than failing the whole run.
+ */
+export async function readBriefJson(filePath: string): Promise<Brief | null> {
+  const raw = await readFile(filePath, 'utf8').catch(() => null);
+  if (raw === null) return null;
+
+  try {
+    const parsed = BriefSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseStoryboard(raw: string): Storyboard {

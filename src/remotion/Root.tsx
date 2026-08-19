@@ -2,7 +2,7 @@ import { Composition } from 'remotion';
 import { ShortVideo } from './ShortVideo';
 import { TimelineSchema, type Timeline } from '../domain/timeline';
 import { DEFAULT_VIDEO_CONFIG } from '../domain/config';
-import sampleTimeline from '../../tests/fixtures/timeline.sample.json';
+import sampleTimeline from './sample-timeline.json';
 
 /**
  * Composition registry.

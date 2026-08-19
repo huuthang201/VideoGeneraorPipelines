@@ -40,6 +40,14 @@ export const ProcessedImageSchema = z.strictObject({
   orientation: z.enum(ORIENTATIONS),
   /** Present only when background removal ran and succeeded (spec §25). */
   cutoutPath: z.string().min(1).nullable().default(null),
+  /**
+   * True when this image was generated rather than supplied by the seller.
+   *
+   * Tracked so the distinction survives into job.json and the timeline: a
+   * viewer cannot tell a generated frame from a photograph, so the system has
+   * to be able to.
+   */
+  generated: z.boolean().default(false),
 });
 
 export type ProcessedImage = z.infer<typeof ProcessedImageSchema>;

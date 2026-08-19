@@ -4,6 +4,7 @@ import { HookScene } from './scenes/HookScene';
 import { ProductScene } from './scenes/ProductScene';
 import { FeatureScene } from './scenes/FeatureScene';
 import { CTAScene } from './scenes/CTAScene';
+import { BrollScene } from './scenes/BrollScene';
 
 /**
  * Maps a scene type to its component (spec §31).
@@ -24,5 +25,7 @@ export const SceneRouter: React.FC<{ scene: TimelineScene; theme: Theme }> = ({ 
       return <FeatureScene scene={scene} theme={theme} />;
     case 'cta':
       return <CTAScene scene={scene} theme={theme} />;
+    case 'broll':
+      return <BrollScene scene={scene} theme={theme} />;
   }
 };

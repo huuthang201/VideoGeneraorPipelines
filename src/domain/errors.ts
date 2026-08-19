@@ -24,6 +24,9 @@ export const ERROR_CODES = {
 
   // images
   IMAGE_PROCESSING_FAILED: 'IMAGE_PROCESSING_FAILED',
+  /** A b-roll prompt would have depicted the product or an unsourced claim. */
+  IMAGE_PROMPT_REJECTED: 'IMAGE_PROMPT_REJECTED',
+  IMAGE_GENERATION_UNAVAILABLE: 'IMAGE_GENERATION_UNAVAILABLE',
 
   // render
   RENDER_FAILED: 'RENDER_FAILED',
@@ -52,6 +55,8 @@ export type PipelineStage =
   | 'validate'
   | 'process-images'
   | 'generate-storyboard'
+  | 'suggest-brief'
+  | 'generate-broll'
   | 'generate-tts'
   | 'generate-captions'
   | 'calculate-timeline'

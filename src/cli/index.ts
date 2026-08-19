@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import path from 'node:path';
-import { readdir, mkdir, rm, rename } from 'node:fs/promises';
-import { loadConfig, jobPaths } from '../config/env';
+import { readdir, mkdir, rm, rename, writeFile } from 'node:fs/promises';
+import { loadConfig, jobPaths, type AppConfig } from '../config/env';
 import { createLogger } from '../utils/logger';
-import { runPipeline } from '../pipeline/video-pipeline';
+import { runPipeline, readInfoJson, type PipelineResult } from '../pipeline/video-pipeline';
 import { validateOutput } from '../video/validator';
-import { isPipelineError } from '../domain/errors';
+import { ERROR_CODES, PipelineError, isPipelineError } from '../domain/errors';
+import { listImageFiles } from '../image/sharp.processor';
 import { prepareProject } from './prepare';
 import { ClaudeCodeStoryboardProvider } from '../ai/claude-code.provider';
+import { suggestBrief } from '../ai/suggest-brief.provider';
 import { LocalDriveStorageProvider } from '../storage/local-drive.provider';
 
 /**
@@ -48,9 +50,13 @@ program
   .option('--mock-tts', 'use placeholder narration instead of calling Edge TTS', false)
   .option('--no-publish', 'leave the output in runtime/jobs instead of copying to 03_OUTPUT')
   .option('--voice <name>', 'override TTS_VOICE for this run, e.g. vi-VN-NamMinhNeural')
+  .option('--no-broll', 'build from the supplied photographs only, skipping AI b-roll')
   .description('Run the full pipeline for one project')
   .action(
-    async (job: string, opts: { force: boolean; mockTts: boolean; publish: boolean; voice?: string }) => {
+    async (
+      job: string,
+      opts: { force: boolean; mockTts: boolean; publish: boolean; voice?: string; broll: boolean },
+    ) => {
     const config = loadConfig();
     const projectId = resolveProjectId(job, config.jobsDir);
     const logger = createLogger({ level: config.logLevel }).forProject(projectId);
@@ -65,6 +71,7 @@ program
           useMockTts: opts.mockTts,
           publish: opts.publish,
           voiceOverride: opts.voice,
+          noBroll: !opts.broll,
           storyboardSource: new ClaudeCodeStoryboardProvider(config, logger),
         }),
       logger,
@@ -113,44 +120,56 @@ program
 program
   .command('regenerate-content')
   .argument('<job>', 'path to a job folder, or a project id under runtime/jobs')
-  .description('Discard the existing storyboard and ask Claude for a new one (spec §53)')
+  .description('Discard the existing storyboard and ask Claude for a new one, then re-render (spec §53)')
+  .action(async (job: string) => {
+    const config = loadConfig();
+    const projectId = resolveProjectId(job, config.jobsDir);
+    const logger = createLogger({ level: config.logLevel }).forProject(projectId);
+
+    await run(() => regenerateStoryboard(projectId, config, logger, { storyboardOnly: false }), logger);
+  });
+
+program
+  .command('generate-storyboard')
+  .argument('<job>', 'path to a job folder, or a project id under runtime/jobs')
+  .description('Ask Claude for a new storyboard only (no TTS, no render); archives it as a new version')
+  .action(async (job: string) => {
+    const config = loadConfig();
+    const projectId = resolveProjectId(job, config.jobsDir);
+    const logger = createLogger({ level: config.logLevel }).forProject(projectId);
+
+    await run(() => regenerateStoryboard(projectId, config, logger, { storyboardOnly: true }), logger);
+  });
+
+program
+  .command('suggest-brief')
+  .argument('<job>', 'path to a job folder, or a project id under runtime/jobs')
+  .description('Look at the product photos and draft a context + hook suggestion (writes brief.json)')
   .action(async (job: string) => {
     const config = loadConfig();
     const projectId = resolveProjectId(job, config.jobsDir);
     const logger = createLogger({ level: config.logLevel }).forProject(projectId);
 
     await run(async () => {
-      // Only this command spends a Claude call by design; `generate` reuses an
-      // existing storyboard and `render` never calls the model at all.
       const paths = jobPaths(config.jobsDir, projectId);
-      const backup = `${paths.storyboardJson}.previous`;
-
-      // Set aside rather than delete. Deleting first meant a rejected
-      // regeneration left the project with no storyboard at all - strictly
-      // worse than the one it had been asked to improve on, and the working
-      // copy was gone.
-      const had = await rename(paths.storyboardJson, backup).then(
-        () => true,
-        () => false,
-      );
-      if (had) logger.step('Existing storyboard set aside');
-
-      try {
-        await runPipeline({
-          projectId,
-          config,
-          logger,
-          force: true,
-          storyboardSource: new ClaudeCodeStoryboardProvider(config, logger),
-        });
-        await rm(backup, { force: true });
-      } catch (err) {
-        if (had) {
-          await rename(backup, paths.storyboardJson).catch(() => {});
-          logger.warn('Regeneration failed; restored the previous storyboard');
-        }
-        throw err;
+      const assetFilenames = await listImageFiles(paths.preview).catch(() => []);
+      if (assetFilenames.length === 0) {
+        throw new PipelineError(
+          ERROR_CODES.PROJECT_NOT_FOUND,
+          'suggest-brief',
+          `No processed preview images in ${paths.preview}. Run "prepare" first.`,
+        );
       }
+
+      const info = await readInfoJson(paths.infoJson);
+      const suggestion = await suggestBrief(config, logger, {
+        previewDir: paths.preview,
+        assetFilenames,
+        info,
+      });
+
+      await writeFile(paths.briefJson, `${JSON.stringify(suggestion, null, 2)}\n`, 'utf8');
+      logger.done(`brief.json written → ${paths.briefJson}`);
     }, logger);
   });
 
@@ -259,6 +278,52 @@ program
       process.exitCode = 1;
     }
   });
+
+/**
+ * Shared by `regenerate-content` and `generate-storyboard`: both must force a
+ * fresh Claude call even when a storyboard.json already exists, which means
+ * setting the existing file aside first (spec §53) - `runPipeline` only calls
+ * the AI when none is present. The only difference between the two commands
+ * is whether the pipeline continues on to TTS/render afterwards.
+ */
+async function regenerateStoryboard(
+  projectId: string,
+  config: AppConfig,
+  logger: ReturnType<typeof createLogger>,
+  opts: { storyboardOnly: boolean },
+): Promise<PipelineResult> {
+  const paths = jobPaths(config.jobsDir, projectId);
+  const backup = `${paths.storyboardJson}.previous`;
+
+  // Set aside rather than delete. Deleting first meant a rejected
+  // regeneration left the project with no storyboard at all - strictly worse
+  // than the one it had been asked to improve on, and the working copy was
+  // gone.
+  const had = await rename(paths.storyboardJson, backup).then(
+    () => true,
+    () => false,
+  );
+  if (had) logger.step('Existing storyboard set aside');
+
+  try {
+    const result = await runPipeline({
+      projectId,
+      config,
+      logger,
+      force: true,
+      storyboardOnly: opts.storyboardOnly,
+      storyboardSource: new ClaudeCodeStoryboardProvider(config, logger),
+    });
+    await rm(backup, { force: true });
+    return result;
+  } catch (err) {
+    if (had) {
+      await rename(backup, paths.storyboardJson).catch(() => {});
+      logger.warn('Regeneration failed; restored the previous storyboard');
+    }
+    throw err;
+  }
+}
 
 /**
  * Accepts either a path or a bare id, because the two callers naturally use

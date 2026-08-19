@@ -1,4 +1,5 @@
 import type { ProductInfo } from '../../domain/project';
+import type { Brief } from '../../domain/brief';
 import { ANIMATIONS, SCENE_TYPES, TRANSITIONS } from '../../domain/scene';
 import { STYLES } from '../../domain/config';
 
@@ -22,8 +23,13 @@ export interface PromptInput {
   previewDir: string;
   targetDurationSec: number;
   defaultStyle: string;
+  /** Whether the image backend is available for this run. */
+  allowBroll: boolean;
+  maxBrollScenes: number;
   femaleVoice: string;
   maleVoice: string;
+  /** Optional user-supplied creative direction (spec: UI "bối cảnh"/"hook" boxes). */
+  brief?: Brief | null;
 }
 
 export function buildStoryboardPrompt(input: PromptInput): string {
@@ -43,6 +49,27 @@ export function buildStoryboardPrompt(input: PromptInput): string {
     input.info
       ? '```json\n' + JSON.stringify(input.info, null, 2) + '\n```'
       : '(Không có info.json — xem phần quy tắc bên dưới.)',
+    ``,
+    `## Bối cảnh do người dùng cung cấp`,
+    ``,
+    input.brief?.context
+      ? [
+          `Người dùng muốn video xoay quanh bối cảnh/tình huống sau. Hãy dựng`,
+          `kịch bản bám theo ý này thay vì tự nghĩ bối cảnh khác:`,
+          `"${input.brief.context}"`,
+        ].join('\n')
+      : `(Người dùng không cung cấp bối cảnh cụ thể — tự chọn bối cảnh hợp với ảnh.)`,
+    ``,
+    `## Ý tưởng hook do người dùng cung cấp`,
+    ``,
+    input.brief?.hook
+      ? [
+          `Người dùng muốn cảnh đầu tiên (hook, 3 giây đầu) truyền tải đúng ý sau.`,
+          `Viết lại cho tự nhiên và đúng giọng văn ở phần dưới, đừng chép nguyên`,
+          `văn nếu câu gốc chưa đủ hài, nhưng phải giữ đúng ý:`,
+          `"${input.brief.hook}"`,
+        ].join('\n')
+      : `(Người dùng không cung cấp ý hook — tự nghĩ hook theo hướng dẫn bên dưới.)`,
     ``,
     `## Quy tắc về sự thật — quan trọng nhất`,
     ``,
@@ -122,7 +149,8 @@ export function buildStoryboardPrompt(input: PromptInput): string {
     `## Yêu cầu nội dung`,
     ``,
     `- Toàn bộ nội dung bằng TIẾNG VIỆT.`,
-    `- "narration" của mỗi cảnh là câu sẽ được đọc thành tiếng.`,
+    `- "narration" của mỗi cảnh là câu sẽ được đọc thành tiếng, TỐI ĐA 200 ký tự.`,
+    `  Đủ cho một câu dựng và một câu bẻ lái. Dài hơn sẽ bị từ chối.`,
     `- "headline" là chữ hiện trên màn hình: tối đa 28 ký tự, ngắn và đập vào mắt.`,
     `  Headline cũng nên tếu, đừng chỉ lặp lại narration.`,
     `- Cảnh đầu tiên phải là "hook" và phải khiến người xem dừng lại trong 1 giây.`,
@@ -131,6 +159,51 @@ export function buildStoryboardPrompt(input: PromptInput): string {
     `- Tổng độ dài mong muốn khoảng ${input.targetDurationSec} giây.`,
     `- Dùng 4 đến 6 cảnh.`,
     `- Mỗi ảnh nên được dùng ít nhất một lần nếu hợp lý.`,
+    ``,
+    `## Cảnh b-roll (ảnh do AI sinh)`,
+    ``,
+    input.allowBroll
+      ? [
+          `Ba tấm ảnh sản phẩm khó gánh nổi ${input.targetDurationSec} giây mà không lặp lại.`,
+          `Bạn được thêm cảnh loại "broll": ảnh bối cảnh do AI sinh, xen giữa các cảnh sản phẩm.`,
+          ``,
+          `Cảnh "broll" khác mọi loại khác ở chỗ:`,
+          `- KHÔNG có trường "asset" (để chuỗi rỗng) — ảnh chưa tồn tại.`,
+          `- BẮT BUỘC có trường "imagePrompt": mô tả ảnh cần sinh, viết bằng TIẾNG ANH.`,
+          ``,
+          `### Ba quy tắc tuyệt đối cho imagePrompt`,
+          ``,
+          `1. KHÔNG được nhắc tới sản phẩm. Không tên, không thương hiệu, không loại`,
+          `   sản phẩm. Ảnh sinh là BỐI CẢNH quanh sản phẩm — quán cà phê lúc đêm,`,
+          `   bàn làm việc bừa bộn, đường phố lúc tan tầm. Sản phẩm chỉ xuất hiện`,
+          `   qua ảnh chụp thật mà người bán cung cấp.`,
+          ``,
+          `2. KHÔNG được minh hoạ một tính năng mà info.json không có. Một tấm ảnh`,
+          `   mưa xối xả nói "chống nước" mạnh hơn mọi câu chữ. Ảnh cũng là một`,
+          `   lời khẳng định, nên phải có nguồn y như lời nói.`,
+          ``,
+          `3. KHÔNG đặt chữ vào ảnh. Model sinh chữ rất tệ, sẽ ra chữ méo vô nghĩa.`,
+          ``,
+          `### Viết imagePrompt thế nào`,
+          ``,
+          `Tiếng Anh, một câu dài, tả: chủ thể · bối cảnh · ánh sáng · góc máy ·`,
+          `độ sâu trường ảnh · tông màu. Ưu tiên cảnh rộng, tránh cận mặt người`,
+          `(model hay lỗi ở mặt và tay).`,
+          ``,
+          `Ví dụ tốt:`,
+          `  "cinematic wide shot of a quiet Hanoi coffee shop at night, warm`,
+          `   pendant lights, rain streaking the window, empty wooden tables,`,
+          `   shallow depth of field, moody amber and teal grading"`,
+          ``,
+          `Ví dụ BỊ CHẶN:`,
+          `  "a thermos on a desk"          → nhắc tới sản phẩm`,
+          `  "a bag surviving heavy rain"   → minh hoạ tính năng`,
+          `  "a sign saying SALE 50%"       → có chữ, và là khuyến mãi bịa`,
+          ``,
+          `Dùng nhiều nhất ${Math.floor(input.maxBrollScenes)} cảnh broll. Phần lớn video`,
+          `vẫn phải là sản phẩm thật.`,
+        ].join('\n')
+      : `Lần này KHÔNG dùng cảnh "broll". Chỉ dùng ảnh thật đã cung cấp.`,
     ``,
     `## Nhịp hình`,
     ``,
@@ -141,7 +214,7 @@ export function buildStoryboardPrompt(input: PromptInput): string {
     ``,
     `## Giá trị hợp lệ`,
     ``,
-    `- type: ${SCENE_TYPES.join(' | ')}`,
+    `- type: ${(input.allowBroll ? SCENE_TYPES : SCENE_TYPES.filter((t) => t !== 'broll')).join(' | ')}`,
     `- animation: ${ANIMATIONS.join(' | ')}`,
     `- transition: ${TRANSITIONS.join(' | ')}`,
     `- style: ${STYLES.join(' | ')} (gợi ý: ${input.defaultStyle})`,

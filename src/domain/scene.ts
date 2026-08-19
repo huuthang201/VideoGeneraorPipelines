@@ -18,7 +18,7 @@ import { z } from 'zod';
  * `image` from §30 is not a separate type here - it is `product` without a
  * headline, which the component already handles.
  */
-export const SCENE_TYPES = ['hook', 'product', 'feature', 'cta'] as const;
+export const SCENE_TYPES = ['hook', 'product', 'feature', 'cta', 'broll'] as const;
 export const SceneTypeSchema = z.enum(SCENE_TYPES);
 export type SceneType = z.infer<typeof SceneTypeSchema>;
 
@@ -59,19 +59,78 @@ export type ImageFit = z.infer<typeof ImageFitSchema>;
  * derived from measured TTS audio in the timeline builder (§2.2 of the plan).
  * Remotion never sees this field - it only ever receives a `Timeline`.
  */
-export const SceneSchema = z.strictObject({
-  id: z.string().min(1),
-  type: SceneTypeSchema,
-  /** Filename of a source image; refined against the real file list at parse time. */
-  asset: z.string().min(1),
+export const SceneSchema = z
+  .strictObject({
+    id: z.string().min(1),
+    type: SceneTypeSchema,
+    /**
+     * Filename of a source image, refined against the real file list at parse
+     * time. Empty for a `broll` scene, whose image does not exist yet.
+     */
+    asset: z.string().default(''),
+    /**
+     * Description of an image to generate, for `broll` scenes only.
+     *
+     * B-roll exists because three product photographs cannot carry
+     * twenty-five seconds without the same picture coming round again. The
+     * generated image sets a scene *around* the product - a café at night, a
+     * commute, a desk - and never depicts the product itself, which is what
+     * `image/generation/prompt-guard.ts` enforces.
+     */
+    imagePrompt: z.string().optional(),
   /** On-screen text. Short by design - long headlines wrap badly at 9:16. */
   headline: z.string().max(28),
   /** The line that gets spoken. Non-empty: Vietnamese narration is mandatory (§7). */
   narration: z.string().min(1).max(140),
   /** Claude's guess in seconds. Advisory only. */
   duration: z.number().positive().max(15),
-  animation: AnimationNameSchema,
-  transition: TransitionNameSchema,
-});
+    animation: AnimationNameSchema,
+    transition: TransitionNameSchema,
+  })
+  .superRefine((scene, ctx) => {
+    // The two image sources are mutually exclusive by design. A scene that
+    // carried both would leave it ambiguous which picture the viewer sees, and
+    // a generated image standing in for a real product photograph is exactly
+    // what must not happen.
+    if (scene.type === 'broll') {
+      if (!scene.imagePrompt?.trim()) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['imagePrompt'],
+          message: 'A "broll" scene needs an imagePrompt describing the image to generate.',
+        });
+      }
+      if (scene.asset.trim()) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['asset'],
+          message: 'A "broll" scene must not reference a source photo; its image is generated.',
+        });
+      }
+      return;
+    }
+
+    if (!scene.asset.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['asset'],
+        message: `A "${scene.type}" scene must reference one of the supplied photographs.`,
+      });
+    }
+    if (scene.imagePrompt?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['imagePrompt'],
+        message:
+          `Only "broll" scenes may generate an image. A "${scene.type}" scene shows the real ` +
+          'product, so it must use one of the supplied photographs.',
+      });
+    }
+  });
 
 export type Scene = z.infer<typeof SceneSchema>;
+
+/** True when this scene's image is generated rather than supplied. */
+export function isGeneratedScene(scene: Pick<Scene, 'type'>): boolean {
+  return scene.type === 'broll';
+}

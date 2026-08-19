@@ -98,6 +98,20 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineOutput {
     cursor += durationInFrames;
 
     const image = imageByName.get(scene.asset);
+
+    // Belt and braces. The schema already forbids a non-broll scene from
+    // carrying an imagePrompt, but this is the last point before pixels: a
+    // generated picture standing in for a product photograph is the failure
+    // this whole feature is designed around, so it is checked where the
+    // substitution would actually happen.
+    if (image?.generated && scene.type !== 'broll') {
+      throw new Error(
+        `Scene "${scene.id}" is a "${scene.type}" scene but resolved to the generated image ` +
+          `"${image.filename}". Only "broll" scenes may use generated imagery; everything else ` +
+          'must show one of the supplied photographs.',
+      );
+    }
+
     if (!image) {
       throw new Error(
         `Scene "${scene.id}" references "${scene.asset}", which is not among the processed images: ` +
