@@ -151,23 +151,3 @@ export async function listImageFiles(dir: string): Promise<string[]> {
     .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 }
 
-/**
- * Confirms a file is a decodable image, used during input validation.
- *
- * Reads metadata rather than trusting the extension - a half-copied file has
- * the right name long before it has all its bytes, and this is what catches it
- * (spec §7).
- */
-export async function probeImage(
-  filePath: string,
-): Promise<{ ok: true; width: number; height: number } | { ok: false; reason: string }> {
-  try {
-    const metadata = await sharp(filePath, { failOn: 'error' }).metadata();
-    if (!metadata.width || !metadata.height) {
-      return { ok: false, reason: 'no readable dimensions' };
-    }
-    return { ok: true, width: metadata.width, height: metadata.height };
-  } catch (err) {
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
-  }
-}

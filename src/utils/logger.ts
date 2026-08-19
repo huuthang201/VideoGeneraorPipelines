@@ -103,17 +103,3 @@ async function appendJsonLine(logDir: string, record: Record<string, unknown>): 
     // Intentionally silent - see above.
   }
 }
-
-/** Discards everything. For tests that exercise pipeline logic. */
-export function silentLogger(): Logger {
-  const noop = () => {};
-  const logger: Logger = {
-    step: noop,
-    done: noop,
-    warn: noop,
-    error: noop,
-    debug: noop,
-    forProject: () => logger,
-  };
-  return logger;
-}

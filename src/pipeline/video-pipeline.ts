@@ -30,6 +30,7 @@ import { FileCache } from '../utils/cache';
 import { LocalDriveStorageProvider } from '../storage/local-drive.provider';
 import { ComfyUIImageProvider } from '../image/generation/comfyui.provider';
 import { generateBroll } from './stages/generate-broll';
+import { readManifest } from '../cli/generate-broll';
 import { RETRY_BUDGETS, withRetry } from '../utils/retry';
 
 export const PIPELINE_VERSION = '1.0.0';
@@ -235,7 +236,30 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       );
     }
 
-    if (wantsBroll) {
+    // Images generated ahead of time by `generate-broll` are reused as-is. That
+    // is the normal path now: the operator sees and approves the footage before
+    // a video is built, and a render never blocks on a minute of inference.
+    const preGenerated = await readManifest(paths.generated);
+
+    if (wantsBroll && preGenerated.length > 0) {
+      const { images: prepared } = await processImages({
+        sourceDir: paths.generated,
+        outputDir: paths.generated,
+        previewDir: paths.preview,
+      }).catch(() => ({ images: [] as ProcessedImage[] }));
+
+      generatedImages = prepared
+        .filter((img) => preGenerated.some((g) => g.filename === img.filename))
+        .map((img) => ({ ...img, generated: true }));
+
+      generatedRecord = preGenerated.map((g) => ({
+        sceneId: '(pre-generated)',
+        prompt: g.prompt,
+        filename: g.filename,
+      }));
+
+      logger.done(`Using ${generatedImages.length} pre-generated context image(s)`);
+    } else if (wantsBroll) {
       job = await updateJob(paths, job, { status: 'IMAGE_PROCESSING', stage: 'generate-broll' });
 
       const imageProvider = new ComfyUIImageProvider({

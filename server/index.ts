@@ -2,6 +2,7 @@ import path from 'node:path';
 import express from 'express';
 import { loadConfig } from '../src/config/env';
 import { projectsRouter } from './routes/projects';
+import { brollRouter } from './routes/broll';
 import { briefRouter } from './routes/brief';
 import { storyboardRouter } from './routes/storyboard';
 import { pipelineRouter } from './routes/pipeline';
@@ -17,6 +18,7 @@ app.use(express.json());
 
 // Most specific mounts first: Express tries each `app.use` in order and only
 // the first whose path prefix matches gets to handle the request.
+app.use('/api/projects/:id/broll', brollRouter);
 app.use('/api/projects/:id/brief', briefRouter);
 app.use('/api/projects/:id/storyboard', storyboardRouter);
 app.use('/api/projects/:id/pipeline', pipelineRouter);

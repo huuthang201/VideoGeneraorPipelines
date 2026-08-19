@@ -128,10 +128,6 @@ export function getContentEntry(animation: AnimationName): ContentEntry {
   }
 }
 
-/** True when the animation needs overscan to avoid showing frame edges. */
-export function requiresOverscan(animation: AnimationName): boolean {
-  return animation.startsWith('pan-');
-}
 
 function clamp01(value: number): number {
   if (Number.isNaN(value)) return 0;

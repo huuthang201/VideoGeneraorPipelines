@@ -61,11 +61,3 @@ export const SafeArea: React.FC<SafeAreaProps> = ({
   );
 };
 
-/** Pixel bounds of the safe box, for callers that need to measure rather than nest. */
-export function safeAreaBox(frameWidth: number, frameHeight: number) {
-  const left = frameWidth * SAFE_AREA.left;
-  const right = frameWidth * (1 - SAFE_AREA.right);
-  const top = frameHeight * SAFE_AREA.top;
-  const bottom = frameHeight * (1 - SAFE_AREA.bottom);
-  return { left, top, right, bottom, width: right - left, height: bottom - top };
-}

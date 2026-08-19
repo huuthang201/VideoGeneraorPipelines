@@ -55,14 +55,6 @@ const EnvSchema = z.object({
   VIDEO_DURATION_MIN: z.coerce.number().positive().default(15),
   VIDEO_DURATION_MAX: z.coerce.number().positive().default(35),
 
-  FEATURE_REMOVE_BACKGROUND: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
-  FEATURE_AI_IMAGE_GENERATION: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
 
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
 });
@@ -93,7 +85,6 @@ export interface AppConfig {
     durationMin: number;
     durationMax: number;
   };
-  features: { removeBackground: boolean; aiImageGeneration: boolean };
   logLevel: 'trace' | 'debug' | 'info' | 'warn' | 'error';
 }
 
@@ -142,10 +133,6 @@ export function loadConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfi
       targetDuration: env.VIDEO_TARGET_DURATION,
       durationMin: env.VIDEO_DURATION_MIN,
       durationMax: env.VIDEO_DURATION_MAX,
-    },
-    features: {
-      removeBackground: env.FEATURE_REMOVE_BACKGROUND,
-      aiImageGeneration: env.FEATURE_AI_IMAGE_GENERATION,
     },
     logLevel: env.LOG_LEVEL,
   };

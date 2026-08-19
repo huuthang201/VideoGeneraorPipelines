@@ -137,14 +137,4 @@ export function computeFit(
   };
 }
 
-/** True when the box covers the whole frame - i.e. no bars will show. */
-export function coversFrame(box: FitBox, frameWidth: number, frameHeight: number): boolean {
-  // Tolerate sub-pixel rounding; a 0.5px gap is not a visible bar.
-  const epsilon = 1;
-  return box.width >= frameWidth - epsilon && box.height >= frameHeight - epsilon;
-}
 
-/** The source aspect ratio, for asserting in tests that nothing got squashed. */
-export function boxAspectRatio(box: FitBox): number {
-  return box.width / box.height;
-}

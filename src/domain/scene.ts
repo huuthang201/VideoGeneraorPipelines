@@ -130,7 +130,3 @@ export const SceneSchema = z
 
 export type Scene = z.infer<typeof SceneSchema>;
 
-/** True when this scene's image is generated rather than supplied. */
-export function isGeneratedScene(scene: Pick<Scene, 'type'>): boolean {
-  return scene.type === 'broll';
-}

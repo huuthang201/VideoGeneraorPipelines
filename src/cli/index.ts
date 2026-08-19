@@ -9,9 +9,11 @@ import { validateOutput } from '../video/validator';
 import { ERROR_CODES, PipelineError, isPipelineError } from '../domain/errors';
 import { listImageFiles } from '../image/sharp.processor';
 import { prepareProject } from './prepare';
+import { generateBrollImages } from './generate-broll';
 import { ClaudeCodeStoryboardProvider } from '../ai/claude-code.provider';
 import { suggestBrief } from '../ai/suggest-brief.provider';
 import { LocalDriveStorageProvider } from '../storage/local-drive.provider';
+import { shutdownVieNeu } from '../tts/vieneu.provider';
 
 /**
  * The single entry point (spec §57). Everything - a person at a terminal,
@@ -78,6 +80,30 @@ program
     );
   },
 );
+
+program
+  .command('generate-broll')
+  .argument('<job>', 'path to a job folder, or a project id under runtime/jobs')
+  .requiredOption('--description <text>', 'what the video is about, in Vietnamese or English')
+  .option('--count <n>', 'how many images to generate', '3')
+  .description('Generate context images from a description, before writing the script')
+  .action(async (job: string, opts: { description: string; count: string }) => {
+    const config = loadConfig();
+    const projectId = resolveProjectId(job, config.jobsDir);
+    const logger = createLogger({ level: config.logLevel }).forProject(projectId);
+
+    await run(async () => {
+      const count = Math.max(1, Math.min(8, Number.parseInt(opts.count, 10) || 3));
+      const images = await generateBrollImages({
+        projectId,
+        description: opts.description,
+        count,
+        config,
+        logger,
+      });
+      logger.done(`${images.length} context image(s) ready`);
+    }, logger);
+  });
 
 program
   .command('publish')
@@ -238,6 +264,10 @@ program
       }
     }
 
+    // One worker served the whole batch; it goes down with the batch, not with
+    // each video.
+    await shutdownVieNeu().catch(() => {});
+
     logger.done(`Batch finished: ${succeeded} succeeded, ${failed.length} failed`);
     if (failed.length > 0) {
       logger.warn(`Failed: ${failed.join(', ')}`);
@@ -343,6 +373,12 @@ async function run(fn: () => Promise<unknown>, logger: ReturnType<typeof createL
   } catch (err) {
     logger.error(describeError(err));
     process.exitCode = 1;
+  } finally {
+    // The TTS worker holds a neural model in memory and outlives the command
+    // that started it unless it is told to stop. Two orphans were found still
+    // resident after a day of runs - each one several hundred megabytes doing
+    // nothing.
+    await shutdownVieNeu().catch(() => {});
   }
 }
 

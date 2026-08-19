@@ -81,6 +81,3 @@ export function createJob(projectId: string): Job {
   };
 }
 
-export function isTerminal(status: JobStatus): boolean {
-  return status === 'DONE' || status === 'FAILED';
-}

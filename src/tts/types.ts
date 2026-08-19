@@ -53,8 +53,4 @@ export const VIETNAMESE_VOICES = {
   male: 'vi-VN-NamMinhNeural',
 } as const;
 
-export const DEFAULT_VOICE = VIETNAMESE_VOICES.female;
 
-export function isVietnameseVoice(voice: string): boolean {
-  return voice.startsWith('vi-VN-');
-}

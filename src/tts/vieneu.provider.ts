@@ -43,8 +43,6 @@ export interface VieNeuOptions {
   onLog?: (message: string) => void;
 }
 
-/** Sample rate v3 Turbo produces natively. Never resampled by this pipeline. */
-export const VIENEU_SAMPLE_RATE = 48_000;
 
 let sharedWorker: VieNeuWorker | null = null;
 

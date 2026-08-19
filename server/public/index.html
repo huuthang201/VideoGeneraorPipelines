@@ -100,6 +100,28 @@
       </section>
 
       <section class="detail-section">
+        <h3>Ảnh bối cảnh (AI sinh)</h3>
+        <p class="hint-text">
+          Ảnh phụ xen giữa các cảnh sản phẩm, để video không lặp lại cùng một tấm ảnh.
+          Ảnh sinh ra chỉ là <strong>bối cảnh</strong> — không bao giờ chứa sản phẩm.
+        </p>
+        <label class="field">
+          Mô tả video
+          <textarea id="broll-description" rows="3"
+            placeholder="VD: Một bạn nhân viên văn phòng, sáng đi làm vội, hay quên đồ trên bàn"></textarea>
+        </label>
+        <div class="button-row">
+          <label>
+            Số ảnh:
+            <input type="number" id="broll-count" min="1" max="6" value="3" />
+          </label>
+          <button id="btn-generate-broll" class="btn btn-secondary">Tạo ảnh</button>
+        </div>
+        <p id="broll-hint" class="hint-text"></p>
+        <div id="broll-grid" class="images-grid"></div>
+      </section>
+
+      <section class="detail-section">
         <h3>Kịch bản</h3>
         <div class="button-row">
           <button id="btn-generate-storyboard" class="btn btn-secondary">Tạo kịch bản</button>

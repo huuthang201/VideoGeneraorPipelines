@@ -213,6 +213,7 @@
     }
 
     renderImagesSection(detail);
+    renderBrollSection(detail);
     renderStoryboardCurrent(detail.storyboard);
     renderStoryboardVersions(detail.versions || []);
     renderVideoSection(detail);
@@ -238,6 +239,59 @@
       countLabel.textContent = `${detail.imageCount} ảnh — sẵn sàng.`;
     } else {
       countLabel.textContent = `${detail.imageCount}/${MIN_IMAGES} ảnh — cần thêm ${MIN_IMAGES - detail.imageCount} ảnh để có thể tạo kịch bản/video.`;
+    }
+  }
+
+  /**
+   * Generated context images.
+   *
+   * Every tile is badged and removable. A viewer of the finished video cannot
+   * tell a generated frame from a photograph, so the person assembling it
+   * should never have to guess either.
+   */
+  function renderBrollSection(detail) {
+    const grid = $('#broll-grid');
+    grid.innerHTML = '';
+
+    const images = detail.brollImages || [];
+    for (const item of images) {
+      const tile = el('div', { className: 'broll-tile' });
+      tile.appendChild(
+        el('img', {
+          src: `/media/${detail.id}/generated/${item.filename}`,
+          alt: item.scene || item.filename,
+          title: item.prompt || '',
+        }),
+      );
+      tile.appendChild(el('span', { className: 'broll-badge', textContent: 'AI' }));
+
+      const remove = el('button', {
+        className: 'broll-remove',
+        textContent: '×',
+        title: 'Xoá ảnh này',
+      });
+      remove.addEventListener('click', () => removeBroll(detail.id, item.filename));
+      tile.appendChild(remove);
+
+      if (item.scene) tile.appendChild(el('p', { className: 'broll-caption', textContent: item.scene }));
+      grid.appendChild(tile);
+    }
+
+    $('#broll-hint').textContent = images.length
+      ? `${images.length} ảnh bối cảnh. Kịch bản sẽ dùng chúng cho cảnh "broll".`
+      : 'Chưa có ảnh bối cảnh. Mô tả video rồi bấm Tạo ảnh.';
+
+    const busy = detail.badge === 'RUNNING';
+    $('#btn-generate-broll').disabled = busy;
+    $('#broll-description').disabled = busy;
+  }
+
+  async function removeBroll(id, filename) {
+    try {
+      await api(`/api/projects/${id}/broll/${filename}`, { method: 'DELETE' });
+      await openDetail(id);
+    } catch (err) {
+      toast('error', err.message || 'Không xoá được ảnh');
     }
   }
 
@@ -404,6 +458,37 @@
       toast('error', err.message);
     } finally {
       btn.textContent = 'Gợi ý từ ảnh';
+    }
+  });
+
+  $('#btn-generate-broll').addEventListener('click', async () => {
+    const id = state.currentDetailId;
+    const btn = $('#btn-generate-broll');
+    const description = $('#broll-description').value.trim();
+    const count = Math.max(1, Math.min(6, Number($('#broll-count').value) || 3));
+
+    if (!description) {
+      toast('error', 'Cần mô tả video trước khi sinh ảnh');
+      return;
+    }
+
+    btn.disabled = true;
+    try {
+      // Roughly a minute per image, so the elapsed label matters here more than
+      // anywhere else in the UI - without it the page looks hung.
+      await withElapsedLabel(btn, `Đang vẽ ${count} ảnh`, () =>
+        api(`/api/projects/${id}/broll`, {
+          method: 'POST',
+          body: JSON.stringify({ description, count }),
+        }),
+      );
+      await openDetail(id);
+      toast('success', `Đã tạo ${count} ảnh bối cảnh`);
+    } catch (err) {
+      toast('error', err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Tạo ảnh';
     }
   });
 

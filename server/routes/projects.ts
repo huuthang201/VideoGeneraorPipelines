@@ -9,6 +9,7 @@ import { listStoryboardVersions } from '../../src/pipeline/storyboard-store';
 import { readLock } from '../../src/pipeline/lock';
 import { exists, listProjectIds, readProjectSummary } from '../lib/projectStatus';
 import { writeProjectMeta } from '../lib/projectMeta';
+import { readManifest } from '../../src/cli/generate-broll';
 import { isValidProjectId, slugify, uniqueProjectId } from '../lib/slug';
 import { runCli } from '../lib/processRunner';
 
@@ -34,7 +35,7 @@ projectsRouter.get<{ id: string }>('/:id', async (req, res) => {
   const paths = jobPaths(config.jobsDir, id);
   if (!(await exists(paths.root))) return res.status(404).json({ error: 'Không tìm thấy dự án' });
 
-  const [summary, briefRaw, storyboardRaw, versions, previewFilenames] = await Promise.all([
+  const [summary, briefRaw, storyboardRaw, versions, previewFilenames, brollImages] = await Promise.all([
     readProjectSummary(config, id),
     readFile(paths.briefJson, 'utf8').catch(() => null),
     readFile(paths.storyboardJson, 'utf8').catch(() => null),
@@ -42,6 +43,7 @@ projectsRouter.get<{ id: string }>('/:id', async (req, res) => {
     readdir(paths.preview)
       .then((files) => files.filter((f) => f.toLowerCase().endsWith('.jpg')).sort())
       .catch(() => []),
+    readManifest(paths.generated),
   ]);
 
   res.json({
@@ -50,6 +52,7 @@ projectsRouter.get<{ id: string }>('/:id', async (req, res) => {
     storyboard: storyboardRaw ? JSON.parse(storyboardRaw) : null,
     versions,
     previewFilenames,
+    brollImages,
   });
 });
 
