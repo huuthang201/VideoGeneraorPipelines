@@ -2,14 +2,17 @@ import { AbsoluteFill, useCurrentFrame, useVideoConfig } from 'remotion';
 import type { Theme } from '../themes/theme';
 
 /**
- * Thin progress indicator across the top of the frame.
+ * Thin progress line across the top of the frame.
  *
- * Rendered at the composition level rather than per scene, so it reflects the
- * whole video's progress. Hidden entirely in the `minimal` theme.
+ * It does a different job at this length than it did at ten minutes. Nobody
+ * needs to know how much of a forty-second video is left - but a line visibly
+ * moving towards the end of the frame is the cheapest possible signal that the
+ * video is nearly over and there is a payoff coming, which is exactly the
+ * moment a viewer decides whether to keep watching or swipe.
  */
 export const ProgressBar: React.FC<{ theme: Theme }> = ({ theme }) => {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
+  const { durationInFrames, width, height } = useVideoConfig();
 
   if (!theme.progressBar.visible) return null;
 
@@ -20,7 +23,7 @@ export const ProgressBar: React.FC<{ theme: Theme }> = ({ theme }) => {
       <div
         style={{
           width: `${progress * 100}%`,
-          height: theme.progressBar.height,
+          height: Math.max(1, Math.min(width, height) * theme.progressBar.heightRatio),
           backgroundColor: theme.progressBar.color,
         }}
       />

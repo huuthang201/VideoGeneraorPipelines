@@ -29,7 +29,7 @@ export const RETRY_BUDGETS = {
    * It is an unofficial endpoint that intermittently answers with
    * NoAudioReceived for text it will happily synthesise a moment later -
    * observed here on a 484-character narration that failed twice and then
-   * succeeded unchanged. Since Vietnamese narration is mandatory (spec §7),
+   * succeeded unchanged. Since narration is mandatory,
    * a transient refusal otherwise fails the whole job.
    */
   tts: 4,

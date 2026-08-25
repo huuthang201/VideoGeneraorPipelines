@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, mkdir, writeFile, rm } from 'node:fs/promises';
-import { bundle } from '@remotion/bundler';
+import { bundle, type WebpackOverrideFn } from '@remotion/bundler';
 import { ERROR_CODES, PipelineError } from '../domain/errors';
 
 /**
@@ -43,6 +43,7 @@ export async function getBundle(options: BundleOptions = {}): Promise<string> {
       entryPoint: path.resolve(entryPoint),
       outDir: path.resolve(BUNDLE_DIR),
       onProgress: options.onProgress,
+      webpackOverride: inlineFonts,
     });
   } catch (err) {
     throw new PipelineError(
@@ -59,9 +60,25 @@ export async function getBundle(options: BundleOptions = {}): Promise<string> {
 }
 
 /**
- * Hashes everything that can change what the bundle contains: component source
- * and the static assets copied in at bundle time (fonts especially - swapping a
- * font file without rebuilding would silently keep the old glyphs).
+ * Embeds .ttf imports as data: URIs instead of emitting a file to fetch.
+ *
+ * This is what makes `src/remotion/fonts.ts` safe on a long render - the
+ * comment there explains the failure it fixes. Remotion's own config has no
+ * rule for .ttf, so this appends rather than competing with one.
+ */
+const inlineFonts: WebpackOverrideFn = (config) => ({
+  ...config,
+  module: {
+    ...config.module,
+    rules: [...(config.module?.rules ?? []), { test: /\.ttf$/, type: 'asset/inline' }],
+  },
+});
+
+/**
+ * Hashes everything that can change what the bundle contains: component source,
+ * the static assets copied in at bundle time (fonts especially - swapping a
+ * font file without rebuilding would silently keep the old glyphs), and this
+ * file, since the webpack override above changes how those assets are embedded.
  */
 async function hashRemotionSource(): Promise<string> {
   const hash = createHash('sha256');
@@ -69,6 +86,8 @@ async function hashRemotionSource(): Promise<string> {
   for (const dir of [path.join('src', 'remotion'), path.join('src', 'domain'), 'public']) {
     await hashDirectory(dir, hash);
   }
+
+  hash.update(await readFile(path.join('src', 'video', 'bundler.ts'), 'utf8').catch(() => ''));
 
   // A Remotion upgrade changes rendering behaviour without touching our source.
   const pkg = await readFile('package.json', 'utf8').catch(() => '');

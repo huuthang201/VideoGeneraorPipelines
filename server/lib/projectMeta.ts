@@ -10,6 +10,19 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 export interface ProjectMeta {
   displayName: string;
   createdAt: string;
+  /**
+   * What happens once a render finishes.
+   *
+   * A workflow preference rather than anything the engine needs, which is why
+   * it lives here: the CLI uploads when told to and never on its own, so a
+   * `generate` run from a terminal is never a surprise publication.
+   *
+   * A new project defaults to `schedule`, and the option is listed first in the
+   * UI, because that is what this tool is for - a queue that goes out on its
+   * own cadence. Defaulting to `none` meant every project needed the same click
+   * before it did the thing it was made to do.
+   */
+  autoPublish: 'none' | 'now' | 'schedule';
 }
 
 function metaPath(jobDir: string): string {
@@ -23,7 +36,11 @@ export async function writeProjectMeta(jobDir: string, meta: ProjectMeta): Promi
 
 export async function readProjectMeta(jobDir: string, fallbackId: string): Promise<ProjectMeta> {
   const raw = await readFile(metaPath(jobDir), 'utf8').catch(() => null);
-  const fallback: ProjectMeta = { displayName: fallbackId, createdAt: new Date(0).toISOString() };
+  const fallback: ProjectMeta = {
+    displayName: fallbackId,
+    createdAt: new Date(0).toISOString(),
+    autoPublish: 'schedule',
+  };
   if (!raw) return fallback;
 
   try {
@@ -31,6 +48,7 @@ export async function readProjectMeta(jobDir: string, fallbackId: string): Promi
     return {
       displayName: parsed.displayName ?? fallback.displayName,
       createdAt: parsed.createdAt ?? fallback.createdAt,
+      autoPublish: parsed.autoPublish ?? fallback.autoPublish,
     };
   } catch {
     return fallback;

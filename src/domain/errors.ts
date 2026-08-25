@@ -6,6 +6,7 @@
 export const ERROR_CODES = {
   // input / validation
   PROJECT_NOT_FOUND: 'PROJECT_NOT_FOUND',
+  /** A project is missing a character library, an environment library, or both. */
   MINIMUM_IMAGES_NOT_MET: 'MINIMUM_IMAGES_NOT_MET',
   IMAGE_UNREADABLE: 'IMAGE_UNREADABLE',
   INVALID_INFO_JSON: 'INVALID_INFO_JSON',
@@ -17,16 +18,13 @@ export const ERROR_CODES = {
   AI_INVALID_OUTPUT: 'AI_INVALID_OUTPUT',
   AI_FACT_VIOLATION: 'AI_FACT_VIOLATION',
 
-  // tts - Vietnamese narration is mandatory (spec §7, §15)
+  // tts - narration is mandatory: a job cannot reach DONE without real speech
   TTS_GENERATION_FAILED: 'TTS_GENERATION_FAILED',
   TTS_EMPTY_AUDIO: 'TTS_EMPTY_AUDIO',
   TTS_PYTHON_MISSING: 'TTS_PYTHON_MISSING',
 
   // images
   IMAGE_PROCESSING_FAILED: 'IMAGE_PROCESSING_FAILED',
-  /** A b-roll prompt would have depicted the product or an unsourced claim. */
-  IMAGE_PROMPT_REJECTED: 'IMAGE_PROMPT_REJECTED',
-  IMAGE_GENERATION_UNAVAILABLE: 'IMAGE_GENERATION_UNAVAILABLE',
 
   // render
   RENDER_FAILED: 'RENDER_FAILED',
@@ -56,7 +54,6 @@ export type PipelineStage =
   | 'process-images'
   | 'generate-storyboard'
   | 'suggest-brief'
-  | 'generate-broll'
   | 'generate-tts'
   | 'generate-captions'
   | 'calculate-timeline'

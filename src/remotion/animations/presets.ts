@@ -1,14 +1,19 @@
 import type { AnimationName } from '../../domain/scene';
 
 /**
- * Animation presets (spec §24, §32).
+ * Ken Burns presets.
  *
- * Spec §32 gives one flat whitelist, but the twelve names in it are really two
- * different things: some describe how the *image* moves (Ken Burns), the rest
- * describe how *content* enters. Rather than make Claude reason about that
- * distinction, one name drives both - the image motion is looked up here, and
- * anything that is not a camera move falls back to a gentle default drift so no
- * scene is ever completely static (which is what §24 is guarding against).
+ * Every scene is a still photograph held for seconds or for half a minute, so
+ * this file is the entire reason the result reads as a video rather than as a
+ * slideshow. It is also the reason it can read as *restless*, which is why the
+ * amplitudes are not here: they come from the theme (see MotionAmplitude), and
+ * they are sized to the scene length.
+ *
+ * That sizing is the sharpest difference between the two theme packs. A move
+ * has to complete its travel inside the scene to be felt at all, so the fact
+ * pack's amplitudes are several times the podcast pack's - and the podcast
+ * pack's are small on purpose, because a move that is obvious over three
+ * seconds is intrusive over thirty.
  */
 
 export interface ImageMotion {
@@ -23,33 +28,48 @@ export interface ImageMotion {
 /**
  * How far the camera travels, as a fraction of the frame.
  *
- * These are per-theme rather than global because the right amount of movement
- * is a style decision, not a constant: a fast TikTok cut wants visible push-in,
- * while the minimal style is built around stillness.
- *
- * The original values (14% zoom, 6% pan) were far too timid. Spread across a
- * five to nine second scene that reads as a static photograph, which defeats
- * the point of Ken Burns in spec §24 - the whole reason it exists is to get
- * twenty-five seconds of video out of three still images.
+ * Per theme rather than global because the right amount of movement is both a
+ * style decision and a format one: within a pack the night theme moves least
+ * and the daylight one most, and across the packs a four-second scene has to
+ * travel several times as far as a thirty-second one.
  */
 export interface MotionAmplitude {
-  /** Extra scale at the end of a zoom, e.g. 0.3 means 1.0 -> 1.3. */
+  /** Extra scale at the end of a zoom, e.g. 0.08 means 1.0 -> 1.08. */
   zoom: number;
   /** Total overscan held during a pan; half of it is travelled each way. */
   panOverscan: number;
-  /** Scale travel for animations that are not camera moves. */
+  /** Scale travel for `drift`, the almost-imperceptible default. */
   drift: number;
 }
 
+/**
+ * Fallback only, for a caller that has no theme to hand.
+ *
+ * Every real render passes the amplitude from its theme pack, so this value is
+ * never what a finished video moves by. It is set to the fact pack's numbers
+ * because a too-large move is obvious the moment anyone looks, where a
+ * too-small one silently reads as a frozen frame.
+ */
 export const DEFAULT_AMPLITUDE: MotionAmplitude = {
-  zoom: 0.18,
-  panOverscan: 1.18,
-  drift: 0.07,
+  zoom: 0.22,
+  panOverscan: 1.24,
+  drift: 0.12,
 };
 
 const lerp = (from: number, to: number, t: number): number => from + (to - from) * t;
 
 const STATIC: ImageMotion = { scale: 1, translateXRatio: 0, translateYRatio: 0 };
+
+/**
+ * Eases the ends of a move so it does not start and stop abruptly.
+ *
+ * A linear pan is visible precisely at its two ends, where the picture goes
+ * from still to moving in one frame. Smoothstep costs nothing and removes the
+ * only two moments a viewer would have noticed the camera at all.
+ */
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
 
 /**
  * Image transform for a scene at a given point in its life.
@@ -62,18 +82,20 @@ export function getImageMotion(
   progress: number,
   amplitude: MotionAmplitude = DEFAULT_AMPLITUDE,
 ): ImageMotion {
-  const t = clamp01(progress);
+  const t = smoothstep(clamp01(progress));
 
   const zoomMin = 1;
   const zoomMax = 1 + amplitude.zoom;
   const panOverscan = amplitude.panOverscan;
   // Half the slack each way, so the visible edge never leaves the source.
   const panTravel = (panOverscan - 1) / 2;
-  const driftMax = 1 + amplitude.drift;
 
   switch (animation) {
     case 'none':
       return STATIC;
+
+    case 'drift':
+      return { scale: lerp(1, 1 + amplitude.drift, t), translateXRatio: 0, translateYRatio: 0 };
 
     case 'zoom-in':
       return { scale: lerp(zoomMin, zoomMax, t), translateXRatio: 0, translateYRatio: 0 };
@@ -92,42 +114,8 @@ export function getImageMotion(
 
     case 'pan-down':
       return { scale: panOverscan, translateXRatio: 0, translateYRatio: lerp(-panTravel, panTravel, t) };
-
-    // Content-entry animations: the image itself just drifts.
-    case 'fade':
-    case 'spring':
-    case 'slide-left':
-    case 'slide-right':
-    case 'slide-up':
-      return { scale: lerp(1, driftMax, t), translateXRatio: 0, translateYRatio: 0 };
   }
 }
-
-export type ContentEntry = 'fade' | 'spring' | 'slide-left' | 'slide-right' | 'slide-up' | 'none';
-
-/**
- * How the headline enters. Camera moves carry the motion themselves, so their
- * text just fades in rather than competing with the pan.
- */
-export function getContentEntry(animation: AnimationName): ContentEntry {
-  switch (animation) {
-    case 'fade':
-      return 'fade';
-    case 'spring':
-      return 'spring';
-    case 'slide-left':
-      return 'slide-left';
-    case 'slide-right':
-      return 'slide-right';
-    case 'slide-up':
-      return 'slide-up';
-    case 'none':
-      return 'none';
-    default:
-      return 'fade';
-  }
-}
-
 
 function clamp01(value: number): number {
   if (Number.isNaN(value)) return 0;

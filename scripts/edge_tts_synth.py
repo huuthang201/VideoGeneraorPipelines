@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vietnamese speech synthesis with word-level timings, for the Node pipeline.
+"""Edge speech synthesis with word-level timings, for the Node pipeline.
 
 Why the streaming API instead of `edge-tts --write-subtitles`
 ------------------------------------------------------------
@@ -7,7 +7,7 @@ The CLI's subtitle output is cue-level: roughly one entry per sentence. This
 pipeline needs *word* boundaries for two separate reasons, and neither is
 satisfied by sentence cues:
 
-  1. TikTok-style captions highlight the word currently being spoken (spec §18).
+  1. Subtitles highlight the word currently being spoken.
   2. Scene durations are derived by finding which word ends each scene's
      narration, so the timeline lands on real audio positions rather than on
      the model's guess (plan §2.2).
@@ -19,10 +19,20 @@ Offsets from the service are in 100-nanosecond ticks (the SSML/Azure
 convention), converted to milliseconds here so the Node side never has to know
 about that unit.
 
+One call carries a whole script - a ten minute podcast episode or a forty
+second short. The service accepts an utterance of any length and keeps emitting
+boundary events throughout, so nothing needs chunking; a long one just needs a
+generous timeout on the Node side. For Vietnamese the boundaries come one per
+syllable, which is exactly the granularity the subtitles want.
+
+The Node side always passes --voice explicitly, whichever module is running, so
+the defaults below matter only when this is run by hand.
+
 Usage:
-    edge_tts_synth.py --text-file in.txt --voice vi-VN-HoaiMyNeural \\
-        --rate '+5%' --out voice.mp3
+    edge_tts_synth.py --text-file in.txt --voice vi-VN-NamMinhNeural \\
+        --rate '+8%' --out voice.mp3
     edge_tts_synth.py --list-voices --locale vi-VN
+    edge_tts_synth.py --list-voices --locale en-US
 
 Exit codes:
     0  success
@@ -51,10 +61,17 @@ def _fail(code: int, message: str) -> None:
 
 
 async def list_voices(locale: str) -> None:
+    """Voices for one locale, or every one in a language when given just "vi"/"en"."""
     import edge_tts
 
     voices = await edge_tts.list_voices()
-    matching = [v for v in voices if v.get("Locale", "").lower() == locale.lower()]
+    wanted = locale.lower()
+    matching = [
+        v
+        for v in voices
+        if v.get("Locale", "").lower() == wanted
+        or (len(wanted) == 2 and v.get("Locale", "").lower().startswith(f"{wanted}-"))
+    ]
     print(
         json.dumps(
             {
@@ -82,10 +99,9 @@ async def synthesize(
 ) -> None:
     import edge_tts
 
-    # Vietnamese has exactly two Edge voices, so the delivery cannot be changed
-    # by picking a different speaker. Rate and pitch are the only levers between
-    # a flat read and a lively one, which makes exposing them essential rather
-    # than a nicety.
+    # Rate is what turns a competent neural read into one that holds a scroller:
+    # a few percent above the voice's default is the difference between a
+    # newsreader and someone telling you something they just found out.
     kwargs = {}
     if rate:
         kwargs["rate"] = rate
@@ -96,10 +112,8 @@ async def synthesize(
 
     # edge-tts 7.x defaults to boundary="SentenceBoundary", which returns a
     # single event for the whole utterance - useless for both caption
-    # highlighting and scene alignment. Verified against vi-VN: requesting
-    # WordBoundary yields one event per syllable with sub-100ms accuracy, which
-    # suits Vietnamese particularly well since its words are space-separated
-    # syllables already.
+    # highlighting and scene alignment. WordBoundary yields one event per word
+    # with sub-100ms accuracy.
     communicate = edge_tts.Communicate(text, voice, boundary="WordBoundary", **kwargs)
 
     words: list[dict] = []
@@ -150,9 +164,9 @@ async def synthesize(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Edge TTS with word timings")
     parser.add_argument("--text-file", help="UTF-8 file containing the text to speak")
-    parser.add_argument("--voice", default="vi-VN-HoaiMyNeural")
-    parser.add_argument("--rate", default=None, help="e.g. +5%%")
-    parser.add_argument("--pitch", default=None, help="e.g. +15Hz")
+    parser.add_argument("--voice", default="vi-VN-NamMinhNeural")
+    parser.add_argument("--rate", default=None, help="e.g. +8%%")
+    parser.add_argument("--pitch", default=None, help="e.g. +0Hz")
     parser.add_argument("--volume", default=None, help="e.g. +0%%")
     parser.add_argument("--out", help="Output mp3 path")
     parser.add_argument("--list-voices", action="store_true")
@@ -174,7 +188,7 @@ def main() -> None:
 
         text = Path(args.text_file).read_text(encoding="utf-8").strip()
         if not text:
-            _fail(2, "Text file is empty; Vietnamese narration is mandatory")
+            _fail(2, "Text file is empty; narration is mandatory")
 
         asyncio.run(
             synthesize(text, args.voice, args.rate, Path(args.out), args.pitch, args.volume)

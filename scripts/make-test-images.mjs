@@ -1,5 +1,5 @@
 /**
- * Generates the three test images used by the M1 fixture.
+ * Generates the three test images the sample timeline is drawn on.
  *
  * Each one carries a perfect circle and a square grid. That is the point: a
  * circle can only stay circular under a uniform scale, so if any fit mode ever
@@ -12,7 +12,10 @@ import sharp from 'sharp';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
-const OUT_DIR = path.join(process.cwd(), 'src', 'remotion', 'public', 'test-images');
+// The repo-root `public` folder, because that is the one Remotion serves
+// staticFile() from - a `public` directory next to the entry point is not
+// picked up, and the images silently 404 in Studio if they are written there.
+const OUT_DIR = path.join(process.cwd(), 'public', 'test-images');
 
 const SHAPES = [
   { name: 'portrait', width: 1080, height: 1920, bg: '#1d3557', accent: '#e63946' },

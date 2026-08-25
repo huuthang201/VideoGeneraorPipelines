@@ -1,287 +1,183 @@
 import path from 'node:path';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import type { TTSInput, TTSProvider, TTSResult, WordTiming } from './types';
 import { serializeSrt, wordsToCues } from './srt';
+import { exec } from '../utils/exec';
+import { encodeVoice } from '../video/ffmpeg';
+import { getDurationSeconds } from '../video/ffprobe';
 import { ERROR_CODES, PipelineError } from '../domain/errors';
-import { distributeWordsAcrossChunks, type SynthesisChunk } from './chunk-timing';
 
-/**
- * Vietnamese narration via VieNeu-TTS v3 Turbo, running on-device.
- *
- * The engine is a neural model that has to be loaded before it can speak, which
- * makes it a poor fit for the one-process-per-call shape the previous Edge
- * provider used: startup would dominate every job, and a batch of ten videos
- * would pay for it ten times. Instead a single worker process is kept alive and
- * fed requests over stdin, so the model is loaded once per run.
- *
- * The worker is a module-level singleton rather than per-provider-instance
- * because the pipeline constructs a provider per job; sharing it is what lets a
- * `generate-all` batch reuse one loaded model across every video.
- */
-
-interface WorkerResponse {
+interface SynthPayload {
   ok: boolean;
-  id?: string;
-  code?: string;
   error?: string;
   audioPath?: string;
-  durationSec?: number;
-  sampleRate?: number;
-  chunks?: SynthesisChunk[];
-  engine?: string;
-  voice?: string;
-  device?: string;
-  presetVoices?: string[];
+  durationMs?: number;
+  sentences?: number;
+  words?: WordTiming[];
 }
 
-export interface VieNeuOptions {
-  pythonBin: string;
-  /** Reference clip for a cloned voice, or null to use a built-in preset. */
-  referenceAudio: string | null;
-  voice: string;
-  onLog?: (message: string) => void;
-}
-
-
-let sharedWorker: VieNeuWorker | null = null;
-
-/** Shuts the shared worker down. Called by the CLI so the process can exit. */
-export async function shutdownVieNeu(): Promise<void> {
-  await sharedWorker?.shutdown();
-  sharedWorker = null;
-}
-
-class VieNeuWorker {
-  private child: ChildProcessWithoutNullStreams | null = null;
-  private buffer = '';
-  private ready: Promise<WorkerResponse> | null = null;
-  private pending = new Map<string, { resolve: (r: WorkerResponse) => void; reject: (e: Error) => void }>();
-  private nextId = 0;
-  private fatal: Error | null = null;
-
-  constructor(private readonly options: VieNeuOptions) {}
-
-  async start(): Promise<WorkerResponse> {
-    if (this.ready) return this.ready;
-
-    this.ready = new Promise<WorkerResponse>((resolve, reject) => {
-      const script = path.join(process.cwd(), 'scripts', 'vieneu_tts.py');
-      const args = [script, '--serve', '--voice', this.options.voice];
-      if (this.options.referenceAudio) args.push('--reference', this.options.referenceAudio);
-
-      const child = spawn(this.options.pythonBin, args, {
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
-      });
-      this.child = child;
-
-      // The worker logs progress on stderr; only stdout carries the protocol.
-      child.stderr.on('data', (d: Buffer) => {
-        for (const line of d.toString('utf8').split('\n')) {
-          if (line.trim()) this.options.onLog?.(line.trim());
-        }
-      });
-
-      child.stdout.on('data', (d: Buffer) => this.consume(d.toString('utf8'), resolve, reject));
-
-      child.on('error', (err) => {
-        this.fatal = new Error(
-          `Could not start ${this.options.pythonBin}: ${err.message}. Run "npm run setup:python".`,
-        );
-        reject(this.fatal);
-        this.failAllPending();
-      });
-
-      child.on('close', (code) => {
-        this.child = null;
-        if (!this.fatal && code !== 0) {
-          this.fatal = new Error(`VieNeu worker exited with code ${code}`);
-        }
-        this.failAllPending();
-      });
-    });
-
-    return this.ready;
-  }
-
-  private consume(
-    text: string,
-    onReady: (r: WorkerResponse) => void,
-    onReadyError: (e: Error) => void,
-  ): void {
-    this.buffer += text;
-
-    let newline: number;
-    while ((newline = this.buffer.indexOf('\n')) !== -1) {
-      const line = this.buffer.slice(0, newline).trim();
-      this.buffer = this.buffer.slice(newline + 1);
-      if (!line) continue;
-
-      let message: WorkerResponse;
-      try {
-        message = JSON.parse(line) as WorkerResponse;
-      } catch {
-        // Not protocol traffic - most likely a library writing to stdout.
-        this.options.onLog?.(line);
-        continue;
-      }
-
-      if (message.id !== undefined && this.pending.has(message.id)) {
-        this.pending.get(message.id)!.resolve(message);
-        this.pending.delete(message.id);
-        continue;
-      }
-
-      // Startup either announces readiness or reports why it could not start.
-      if (message.ok) onReady(message);
-      else onReadyError(new Error(message.error ?? 'VieNeu failed to start'));
-    }
-  }
-
-  private failAllPending(): void {
-    const error = this.fatal ?? new Error('VieNeu worker stopped');
-    for (const { reject } of this.pending.values()) reject(error);
-    this.pending.clear();
-  }
-
-  async request(payload: Record<string, unknown>, timeoutMs: number): Promise<WorkerResponse> {
-    await this.start();
-    if (!this.child) throw this.fatal ?? new Error('VieNeu worker is not running');
-
-    const id = String(this.nextId++);
-
-    return new Promise<WorkerResponse>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`VieNeu did not respond within ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      this.pending.set(id, {
-        resolve: (r) => {
-          clearTimeout(timer);
-          resolve(r);
-        },
-        reject: (e) => {
-          clearTimeout(timer);
-          reject(e);
-        },
-      });
-
-      this.child!.stdin.write(`${JSON.stringify({ ...payload, id })}\n`);
-    });
-  }
-
-  async shutdown(): Promise<void> {
-    if (!this.child) return;
-    try {
-      await this.request({ op: 'shutdown' }, 5_000);
-    } catch {
-      this.child?.kill('SIGTERM');
-    }
-    this.child = null;
-    this.ready = null;
-  }
-}
-
+/**
+ * Vietnamese narration through VieNeu-TTS, running locally.
+ *
+ * Chosen over Edge for three reasons, in order of how much they matter here:
+ *
+ * 1. **Nineteen voices instead of two.** Microsoft's Vietnamese locale has one
+ *    male voice, full stop; VieNeu has male and female voices in northern,
+ *    central and southern accents, and in reading styles - news, natural,
+ *    storytelling - that are audibly different from each other.
+ * 2. **It is not an unofficial endpoint.** Edge TTS is Microsoft's read-aloud
+ *    service reached through a handshake it does not document, and it
+ *    periodically starts refusing clients. VieNeu is a model on disk.
+ * 3. **Non-verbal cues.** `[cười]`, `[thở dài]` and `[hắng giọng]` are spoken
+ *    as reactions rather than read out, which is the closest thing this format
+ *    has to a sound effect inside a sentence.
+ *
+ * The cost is word timings, which VieNeu does not report - see
+ * `scripts/vieneu_synth.py` for how they are reconstructed and how accurate
+ * that is. `EdgeTTSProvider` is kept alongside this one rather than deleted,
+ * because it is the fallback when a model download is not an option and the
+ * only provider that reports real per-word boundaries.
+ */
 export class VieNeuTTSProvider implements TTSProvider {
   readonly name = 'vieneu';
 
-  constructor(private readonly options: VieNeuOptions) {}
+  constructor(
+    private readonly pythonBin: string,
+    /** Playback speed applied after synthesis. See `encodeVoice`. */
+    private readonly speed: number,
+  ) {}
 
   async synthesize(input: TTSInput): Promise<TTSResult> {
     if (!input.text.trim()) {
       throw new PipelineError(
         ERROR_CODES.TTS_GENERATION_FAILED,
         'generate-tts',
-        'Refusing to synthesize empty text; Vietnamese narration is mandatory (spec §7)',
+        'Refusing to synthesize empty text; narration is mandatory',
       );
     }
 
-    await this.assertReferenceAudio();
     await mkdir(input.outDir, { recursive: true });
 
-    const audioPath = path.join(input.outDir, 'voice.wav');
-    await writeFile(path.join(input.outDir, 'narration.txt'), input.text, 'utf8');
+    const textPath = path.join(input.outDir, 'narration.txt');
+    // The model writes a 48kHz WAV; the MP3 beside it is what gets staged into
+    // the render. The WAV is removed afterwards - it is ten times the size and
+    // nothing reads it once the MP3 exists.
+    const wavPath = path.join(input.outDir, 'voice.raw.wav');
+    const audioPath = path.join(input.outDir, 'voice.mp3');
+    await writeFile(textPath, input.text, 'utf8');
 
-    if (!sharedWorker) sharedWorker = new VieNeuWorker(this.options);
+    const script = path.join(process.cwd(), 'scripts', 'vieneu_synth.py');
+    const args = [script, '--text-file', textPath, '--out', wavPath];
+    if (input.voice) args.push('--voice', input.voice);
 
-    let response: WorkerResponse;
+    let result;
     try {
-      response = await sharedWorker.request(
-        { op: 'synthesize', text: input.text, voice: input.voice, out: audioPath },
-        600_000,
-      );
+      result = await exec(this.pythonBin, args, { timeoutMs: TIMEOUT_MS });
     } catch (err) {
-      // A worker that died takes its model with it; drop the singleton so the
-      // next attempt starts cleanly rather than writing into a dead pipe.
-      sharedWorker = null;
       throw new PipelineError(
-        ERROR_CODES.TTS_GENERATION_FAILED,
+        ERROR_CODES.TTS_PYTHON_MISSING,
         'generate-tts',
-        `VieNeu synthesis failed: ${err instanceof Error ? err.message : String(err)}`,
-        undefined,
+        `Could not run ${this.pythonBin}. Run "npm run setup:vieneu" first.`,
+        { pythonBin: this.pythonBin },
         { cause: err },
       );
     }
 
-    if (!response.ok) {
+    const payload = parsePayload(result.stdout);
+
+    if (result.code !== 0 || !payload?.ok) {
+      const detail = payload?.error ?? result.stderr.trim() ?? 'unknown error';
       throw new PipelineError(
         ERROR_CODES.TTS_GENERATION_FAILED,
         'generate-tts',
-        `VieNeu synthesis failed (${response.code ?? 'unknown'}): ${response.error ?? 'no detail'}`,
+        `VieNeu TTS failed: ${detail}`,
+        { exitCode: result.code, voice: input.voice },
       );
     }
 
-    const durationSec = response.durationSec ?? 0;
-    if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    await encodeVoice({ sourcePath: wavPath, outputPath: audioPath, speed: this.speed });
+    await rm(wavPath, { force: true });
+
+    const duration = await getDurationSeconds(audioPath);
+    if (!Number.isFinite(duration) || duration <= 0) {
       throw new PipelineError(
         ERROR_CODES.TTS_EMPTY_AUDIO,
         'generate-tts',
-        `VieNeu produced audio with no measurable duration (${durationSec}s)`,
+        `VieNeu produced a file with no measurable duration (${duration}s)`,
       );
     }
 
-    // VieNeu reports where each sentence sits but not where each word does, so
-    // word positions are interpolated inside their sentence. Sentence
-    // boundaries stay exact, which is what scene cuts and caption pages need.
-    const words: WordTiming[] = distributeWordsAcrossChunks(response.chunks ?? []);
+    /*
+     * The timings come back at natural speed, so they are divided by it here.
+     *
+     * Scaled rather than re-derived because `atempo` is linear: every position
+     * in the track moves by the same factor, so a timing that was right before
+     * the stretch is right after it once divided. Getting this wrong would not
+     * fail anything - it would just put every subtitle progressively further
+     * out of step with the voice, which is the failure this pipeline is built
+     * to make impossible.
+     */
+    const words = (payload.words ?? []).map((word) => ({
+      text: word.text,
+      fromMs: word.fromMs / this.speed,
+      toMs: word.toMs / this.speed,
+    }));
 
     const captionsPath = path.join(input.outDir, 'captions.srt');
     await writeFile(captionsPath, serializeSrt(wordsToCues(words)), 'utf8');
 
-    return {
-      audioPath,
-      captionsPath,
-      duration: durationSec,
-      words,
-      isMock: false,
-      voice: input.voice,
-    };
+    return { audioPath, captionsPath, duration, words, isMock: false, voice: input.voice };
   }
+}
 
-  /**
-   * Spec §14: a missing reference clip is an error, never a quiet substitution.
-   * Falling back to another voice would change how every video in a series
-   * sounds, and nothing downstream would notice.
-   */
-  private async assertReferenceAudio(): Promise<void> {
-    const reference = this.options.referenceAudio;
-    if (!reference) return;
+/**
+ * Ceiling for one synthesis call.
+ *
+ * Generous because the first call of all is not just synthesis: VieNeu
+ * downloads its model from Hugging Face, which on a cold machine is a few
+ * hundred megabytes. Afterwards a forty-five second script takes about fifteen
+ * seconds including model load, so this only ever fires on a genuinely stuck
+ * run.
+ */
+const TIMEOUT_MS = 900_000;
 
-    const exists = await access(reference).then(
-      () => true,
-      () => false,
-    );
-    if (exists) return;
+/**
+ * The helper prints one JSON object on stdout. Scanning for the last line that
+ * parses keeps this robust against the model loader's own progress output,
+ * which is written to stdout on the first run.
+ */
+function parsePayload(stdout: string): SynthPayload | null {
+  const lines = stdout.trim().split('\n').reverse();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) continue;
+    try {
+      return JSON.parse(trimmed) as SynthPayload;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
 
+/** The engine's preset voices, with the label that names accent and style. */
+export async function listVieNeuVoices(
+  pythonBin: string,
+): Promise<{ name: string; label: string }[]> {
+  const script = path.join(process.cwd(), 'scripts', 'vieneu_synth.py');
+  const result = await exec(pythonBin, [script, '--list-voices'], { timeoutMs: TIMEOUT_MS });
+
+  const payload = parsePayload(result.stdout) as
+    | (SynthPayload & { voices?: { name: string; label: string }[] })
+    | null;
+
+  if (result.code !== 0 || !payload?.ok || !payload.voices) {
     throw new PipelineError(
       ERROR_CODES.TTS_GENERATION_FAILED,
       'generate-tts',
-      `Adam Vietnamese reference voice not found:\n  ${reference}\n\n` +
-        'Place a clean 3-8 second WAV clip of the target voice there, or set ' +
-        'TTS_VOICE to one of the built-in preset voices and leave ' +
-        'TTS_REFERENCE_AUDIO empty.',
-      { referenceAudio: reference },
+      `Could not list VieNeu voices: ${payload?.error ?? result.stderr.trim() ?? 'unknown error'}`,
     );
   }
+
+  return payload.voices;
 }

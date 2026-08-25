@@ -100,14 +100,20 @@ export async function validateOutput(
     });
   }
 
-  // Spec §7 and §39: Vietnamese narration is mandatory, so a missing or empty
-  // audio track is a hard failure rather than a cosmetic issue.
+  // Narration is mandatory, so a missing or empty audio track is a hard failure
+  // rather than a cosmetic issue.
   if (!audio) {
     problems.push({ code: ERROR_CODES.OUTPUT_NO_AUDIO_STREAM, message: 'No audio stream' });
   }
 
-  const minDuration = options.minDurationSec ?? 5;
-  const maxDuration = options.maxDurationSec ?? 180;
+  const minDuration = options.minDurationSec ?? 8;
+  // Five minutes. Only a runaway guard - the length people actually want is a
+  // preference expressed in the brief and enforced by the word budget, not
+  // something to fail a finished render over. The Shorts ceiling is sixty
+  // seconds, and this sits well above it on purpose: a video that overshoots
+  // the format is still a video, and telling someone their render is unusable
+  // is the brief's job, not the validator's.
+  const maxDuration = options.maxDurationSec ?? 300;
 
   if (durationSec < minDuration) {
     problems.push({

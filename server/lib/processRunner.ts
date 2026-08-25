@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import type { ModuleId } from '../../src/domain/config';
 
 /**
  * Every "heavy" action the UI can trigger (prepare, suggest-brief,
@@ -19,9 +20,16 @@ export interface CliResult {
   stderr: string;
 }
 
-export function runCli(args: string[]): Promise<CliResult> {
+/**
+ * Every spawn names its module.
+ *
+ * The CLI refuses to guess one, on purpose - the two pipelines have separate
+ * job directories and separate YouTube credentials - so the flag is prepended
+ * here rather than left to each caller to remember.
+ */
+export function runCli(module: ModuleId, args: string[]): Promise<CliResult> {
   return new Promise((resolve) => {
-    const child = spawn(TSX_BIN, [CLI_ENTRY, ...args], { cwd: REPO_ROOT });
+    const child = spawn(TSX_BIN, [CLI_ENTRY, '--module', module, ...args], { cwd: REPO_ROOT });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d: Buffer) => {
@@ -35,6 +43,6 @@ export function runCli(args: string[]): Promise<CliResult> {
   });
 }
 
-export function spawnCli(args: string[]): ReturnType<typeof spawn> {
-  return spawn(TSX_BIN, [CLI_ENTRY, ...args], { cwd: REPO_ROOT });
+export function spawnCli(module: ModuleId, args: string[]): ReturnType<typeof spawn> {
+  return spawn(TSX_BIN, [CLI_ENTRY, '--module', module, ...args], { cwd: REPO_ROOT });
 }

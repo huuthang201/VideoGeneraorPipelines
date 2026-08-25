@@ -1,20 +1,35 @@
 import type { ProductInfo } from '../domain/project';
-import type { StoryboardDraft } from '../domain/storyboard';
-import { spokenNumbersIn } from './vietnamese-numbers';
+import type { SceneLike } from '../modules/contract';
 
 /**
- * Stops the model asserting facts about a product that nobody gave it
- * (spec §5).
+ * Stops the model asserting figures and commitments that nobody gave it.
  *
  * A prompt instruction is not enough here and neither is a schema. Schemas
- * check shape, and "chỉ 399K" is a perfectly well-shaped string; the model can
- * follow an instruction ninety-nine times and invent a warranty on the
- * hundredth. Since these videos make commercial claims to real buyers, the rule
- * needs a mechanical check rather than good intentions.
+ * check shape, and "just $39, with a lifetime warranty" is a perfectly
+ * well-shaped string; the model can follow an instruction ninety-nine times and
+ * invent a guarantee on the hundredth.
  *
- * The approach is a whitelist: pull every number and claim out of info.json,
- * then scan the storyboard for anything factual that is not on that list. What
- * remains is by definition unsourced.
+ * ## When it applies
+ *
+ * Only when the project has an info.json, and this is worth being clear about
+ * because the videos are literally called facts.
+ *
+ * What this guard checks is not whether a fact is true - nothing mechanical
+ * can - but whether a *commercial* claim was invented. Its rules are the
+ * product ones: this price, this warranty, this certification, or none. A fact
+ * script is full of perfectly correct figures ("khoảng ba nghìn năm", "hai phần
+ * ba bề mặt Trái Đất") that no info.json will ever list, so applying it to
+ * every project would reject correct writing on almost every line - and a guard
+ * that fires constantly on good output is a guard people turn off.
+ *
+ * So the rule is scoped to intent: a project that ships an info.json is
+ * declaring "this video makes checkable commercial claims, and these are the
+ * ones it may make", and the guard holds it to exactly that list. A project
+ * without one is a fact video, and truthfulness there is enforced where it
+ * actually can be - in the prompt, at length, and by whoever reviews the script
+ * before it is published. What the guard never does is *silently* stand down:
+ * `checkFacts` reports `applied: false` so the caller can log which mode a run
+ * was in.
  */
 
 export interface FactViolation {
@@ -26,169 +41,94 @@ export interface FactViolation {
 }
 
 /**
- * Word boundaries that work on Vietnamese.
+ * Claims that imply a commitment somebody has to honour. These are flagged on
+ * sight: unlike a number, there is no version of info.json that makes an
+ * invented free-shipping promise acceptable.
  *
- * JavaScript's \b is defined in terms of \w, which is [A-Za-z0-9_] even under
- * the /u flag. So \b never matches next to đ, á, ệ or any other Vietnamese
- * letter, and a pattern like /\d+đ\b/ silently fails to match "399.000đ".
+ * The Vietnamese patterns cannot use \b. Word boundaries are defined over
+ * [A-Za-z0-9_], so `\bbảo hành\b` matches inside "đảm-bảo hành-lý" and fails to
+ * match where it should once a Vietnamese vowel with a diacritic sits at the
+ * edge. The lookarounds below are the Unicode equivalent: not preceded or
+ * followed by another letter.
  *
- * That is not a cosmetic problem here: it meant the guard was letting invented
- * prices ending in "đ", "nghìn" or "triệu" through untouched, while appearing
- * to pass its tests because nothing matched at all. Unicode-aware lookaround
- * replaces \b throughout.
+ * What the lookarounds cannot do is tell a phrase from a phrase that overlaps
+ * it. Vietnamese is written one syllable at a time, so "đảm bảo hành lý" hits
+ * the "bảo hành" pattern and always will - no boundary rule fixes that, only a
+ * parser would. The cost is bounded and cheap: a false positive is one retry
+ * with the matched text quoted back, not a wrong video, and it can only happen
+ * inside a project that shipped an info.json in the first place.
+ *
+ * The English patterns are kept alongside them. A brief or an info.json may
+ * well be written in English even when the script is not, and a claim smuggled
+ * in through a product name is exactly the case this exists for.
  */
-const B_START = '(?<![\\p{L}\\p{N}])';
-const B_END = '(?![\\p{L}\\p{N}])';
-
-const u = (source: string): RegExp => new RegExp(source, 'giu');
-
 /**
- * Words that mark a number as a product claim.
+ * The parts of the guard that are written in a language.
  *
- * The guard exists to stop invented specifications and prices, and those always
- * carry a unit: hours, inches, millilitres, đồng. A number with no unit beside
- * it is almost always incidental to the story - "thử một lần", "bảy giờ sáng",
- * "ba mẹ tôi cũng dùng" - and checking those against the product data rejected
- * perfectly good narration, burning a retry each time and eventually failing
- * the job over copy that claimed nothing.
+ * Supplied by the module rather than fixed here, and not merely for tone: the
+ * *patterns* are language-specific, so a guard carrying English regexes would
+ * silently pass every promotional claim in a Vietnamese script. The feedback is
+ * echoed straight back to the model, so it has to be in the language the rest
+ * of that conversation is in.
+ *
+ * The machinery around them - what counts as a number, how prices are compared
+ * against info.json, which fields are scanned - is arithmetic and is shared.
  */
-const UNIT_CONTEXT = u(
-  `^\\s*(?:tiếng|ngày|tuần|tháng|inch|cm|mm|km|ml|lít|` +
-    `gram|kg|độ|watt|volt|mah|hz|khz|ghz|mb|gb|tb|megapixel|` +
-    `đồng|nghìn|ngàn|triệu|tỷ|phần trăm)${B_END}`,
-);
+export interface FactGuardLanguage {
+  claimPatterns: { kind: FactViolation['kind']; pattern: RegExp; label: string }[];
+  /** "The number 39 is not in info.json. Allowed: ..." */
+  numberNotAllowed(value: number, allowed: readonly number[]): string;
+  /** "\"free shipping\" is a promotion claim not present in info.json." */
+  claimNotAllowed(text: string, label: string): string;
+  /** The whole retry message, built from the individual violations. */
+  formatFeedback(violations: readonly FactViolation[]): string;
+}
 
-/*
- * Deliberately absent: giờ, phút, giây, năm.
- *
- * Vietnamese already separates these senses - "giờ" is a clock reading while
- * "tiếng" is a duration - so including "giờ" made "bảy giờ sáng" look like a
- * specification and failed narration that claimed nothing about the product.
- * "năm" is worse still, meaning both "year" and "five".
- *
- * The cost is that an invented "giữ nóng tám giờ" now passes. The protection
- * that matters is intact, because a real specification is written with "tiếng"
- * or a physical unit, and the guard was failing far more good copy than bad.
- */
-
-/**
- * Marketing claims that imply a commitment the seller has to honour. These are
- * flagged on sight: unlike a number, there is no version of info.json that
- * makes an invented free-shipping promise acceptable.
- */
-const CLAIM_PATTERNS: { kind: FactViolation['kind']; pattern: RegExp; label: string }[] = [
-  {
-    kind: 'promotion',
-    pattern: u(
-      `${B_START}(giảm giá|khuyến mãi|sale|freeship|miễn phí vận chuyển|tặng kèm|ưu đãi)${B_END}`,
-    ),
-    label: 'promotion',
-  },
-  {
-    kind: 'warranty',
-    pattern: u(`${B_START}(bảo hành|đổi trả|hoàn tiền)${B_END}`),
-    label: 'warranty',
-  },
-  {
-    kind: 'certification',
-    pattern: u(`${B_START}(chính hãng|chứng nhận|kiểm định|đạt chuẩn|cam kết)${B_END}`),
-    label: 'certification',
-  },
-];
+/** The draft fields the guard reads. Structural, so either module's fits. */
+export interface GuardableDraft {
+  project: { episodeTitle: string };
+  content: { summary: string; narration: string };
+  scenes: readonly Pick<SceneLike, 'id' | 'title' | 'narration'>[];
+}
 
 export interface FactGuardResult {
   ok: boolean;
+  /** False when the project has no info.json, so nothing was checked. */
+  applied: boolean;
   violations: FactViolation[];
   /** Ready to paste into a retry prompt. */
   feedback: string;
 }
 
-export function checkFacts(draft: StoryboardDraft, info: ProductInfo | null): FactGuardResult {
+export function checkFacts(
+  draft: GuardableDraft,
+  info: ProductInfo | null,
+  lang: FactGuardLanguage,
+): FactGuardResult {
+  if (info === null) {
+    return { ok: true, applied: false, violations: [], feedback: '' };
+  }
+
   const violations: FactViolation[] = [];
   const allowed = buildWhitelist(info);
   const allowedNumbers = buildNumberWhitelist(info);
 
-  /**
-   * Strict mode is about whether any figure is sourced at all - not about
-   * whether a *price* happens to be present.
-   *
-   * Keying it on the price was wrong in a way that only showed up on a real
-   * product: a bag whose info.json listed "Ngăn laptop 15.6 inch" but no price
-   * had its perfectly sourced "mười lăm phẩy sáu inch" rejected, with an error
-   * message complaining about a price that was never in question. Products with
-   * specifications and no price are ordinary, so that false positive made the
-   * guard unusable for them.
-   */
-  const strict = allowedNumbers.size === 0;
-
   for (const field of collectTextFields(draft)) {
-    // Numbers are checked by value, in whichever form they were written.
-    // Narration spells them out because it is read aloud, so both the digits
-    // and the spoken words have to resolve to something info.json supports.
-    const stated = [
-      ...digitsIn(field.text),
-      ...moneyIn(field.text),
-      // A lone number word is almost always ordinary Vietnamese rather than a
-      // figure, so only deliberate multi-word runs count. "mười lăm phẩy sáu"
-      // is a measurement; the "một" in "một chiếc tai nghe" is an article.
-    ];
-
-    // A spoken run is only a violation when *no* defensible reading of it is
-    // sourced. Committing to one reading rejects correct copy: "ba không bốn"
-    // is how 304 is read aloud, and insisting it means 34 failed a line whose
-    // 304 came straight from info.json.
-    // Two independent signals that a spoken figure is a product claim, and both
-    // are needed:
-    //
-    //   a unit beside it   - "tám tiếng" is a specification even though it is a
-    //                        single word, so a word-count rule alone misses it
-    //   more than one word - "ba trăm chín chín" is deliberate even with no unit
-    //
-    // Requiring both together rejected good narration; requiring either alone
-    // let real claims through. In strict mode - nothing numeric is sourced at
-    // all - the word-count signal is enough on its own, since there is nothing
-    // a figure could legitimately be quoting.
-    const spoken = spokenNumbersIn(field.text).filter((n) => {
-      const measured = statesAMeasurement(field.text, n.tokens);
-      if (measured) return true;
-      return strict && n.tokens.length >= 2;
-    });
-
-    for (const value of stated) {
+    for (const value of [...digitsIn(field.text), ...moneyIn(field.text)]) {
       if (isNumberAllowed(value, allowedNumbers)) continue;
 
       violations.push({
         // Price-magnitude figures are called out as such: it is the difference
-        // between misquoting a spec and misquoting what the buyer will pay.
+        // between misquoting a detail and misquoting what something costs.
         kind: value >= PRICE_THRESHOLD ? 'price' : 'number',
         sceneId: field.sceneId,
         field: field.name,
         matched: String(value),
-        message: strict
-          ? `"${field.text}" states the figure ${value}, but info.json contains no numbers to support it. ` +
-            'Describe what is visible in the photos instead.'
-          : `The figure ${value} does not appear in info.json. Allowed values: ${[...allowedNumbers].join(', ')}.`,
+        message: lang.numberNotAllowed(value, [...allowedNumbers]),
       });
     }
 
-    for (const candidate of spoken) {
-      const readings = [candidate.value, ...candidate.alternates];
-      if (readings.some((r) => isNumberAllowed(r, allowedNumbers))) continue;
-
-      violations.push({
-        kind: candidate.value >= PRICE_THRESHOLD ? 'price' : 'number',
-        sceneId: field.sceneId,
-        field: field.name,
-        matched: candidate.tokens.join(' '),
-        message: strict
-          ? `"${candidate.tokens.join(' ')}" states a figure (${readings.join(' or ')}), but ` +
-            'info.json contains no numbers to support it.'
-          : `"${candidate.tokens.join(' ')}" reads as ${readings.join(' or ')}, none of which ` +
-            `appear in info.json. Allowed values: ${[...allowedNumbers].join(', ')}.`,
-      });
-    }
-
-    for (const { kind, pattern, label } of CLAIM_PATTERNS) {
+    for (const { kind, pattern, label } of lang.claimPatterns) {
       for (const match of field.text.matchAll(pattern)) {
         const text = match[0].trim();
         if (isAllowed(text, allowed)) continue;
@@ -197,7 +137,7 @@ export function checkFacts(draft: StoryboardDraft, info: ProductInfo | null): Fa
           sceneId: field.sceneId,
           field: field.name,
           matched: text,
-          message: `"${text}" makes a ${label} claim that does not appear in info.json.`,
+          message: lang.claimNotAllowed(text, label),
         });
       }
     }
@@ -205,50 +145,30 @@ export function checkFacts(draft: StoryboardDraft, info: ProductInfo | null): Fa
 
   return {
     ok: violations.length === 0,
+    applied: true,
     violations,
-    feedback: formatFeedback(violations),
+    feedback: lang.formatFeedback(violations),
   };
 }
 
 /**
- * Amounts written with a unit attached: "399k", "400 nghìn", "1.2 triệu".
- * digitsIn alone would read those as 399, 400 and 1.2 and compare the wrong
- * magnitude against the whitelist.
+ * Amounts written with a unit attached: "$39", "39k", "1.2 million".
+ * digitsIn alone would read those as 39 and 1.2 and compare the wrong magnitude
+ * against the whitelist.
  */
 function moneyIn(text: string): number[] {
   const values: number[] = [];
   for (const match of text.matchAll(
-    u(`${B_START}\\d[\\d.,]*\\s*(?:k|nghìn|ngàn|triệu|tỷ|tỉ|đ|vnđ|vnd|₫)${B_END}`),
+    /(?:[$£€]\s*)?\b\d[\d.,]*\s*(?:k|thousand|m|million|bn|billion|dollars?|usd|cents?)\b/gi,
   )) {
-    const value = parseVietnameseMoney(match[0]);
+    const value = parseMoney(match[0]);
     if (value !== null) values.push(value);
   }
   return values;
 }
 
 /** Unit suffixes that change a figure's magnitude, so moneyIn must own them. */
-const UNIT_SUFFIX = /^\s*(?:k|nghìn|ngàn|triệu|tỷ|tỉ|đ|vnđ|vnd|₫)(?![\p{L}\p{N}])/iu;
-
-/** Scale words that make a run a magnitude in its own right - i.e. a price. */
-const MAGNITUDE_WORDS = new Set(['nghìn', 'ngàn', 'triệu', 'tỷ', 'tỉ']);
-
-/**
- * True when a spoken figure is presented as a claim about the product.
- *
- * Two ways that happens, and the first is easy to miss: a scale word sits
- * *inside* the number run ("ba trăm chín chín nghìn" is a single run), so
- * looking only at what follows the run would let every spoken price through.
- */
-function statesAMeasurement(text: string, tokens: readonly string[]): boolean {
-  const last = tokens[tokens.length - 1];
-  if (last && MAGNITUDE_WORDS.has(last)) return true;
-
-  const phrase = tokens.join(' ');
-  const index = text.toLowerCase().indexOf(phrase.toLowerCase());
-  if (index === -1) return true; // cannot tell; err on the side of checking
-
-  return UNIT_CONTEXT.test(text.slice(index + phrase.length));
-}
+const UNIT_SUFFIX = /^\s*(?:k|thousand|m|million|bn|billion)\b/i;
 
 /** Numeric values written as digits, including decimals and grouped thousands. */
 function digitsIn(text: string): number[] {
@@ -257,19 +177,13 @@ function digitsIn(text: string): number[] {
   for (const match of text.matchAll(/\d[\d.,]*/gu)) {
     const raw = match[0].replace(/[.,]$/, '');
 
-    // "399K" is 399,000, not 399. Leaving it to moneyIn avoids reporting the
-    // same figure twice at two different magnitudes, where the bare reading
-    // would be both wrong and the one the caller sees first.
-    const rest = text.slice(match.index + match[0].length);
-    if (UNIT_SUFFIX.test(rest)) continue;
+    // "39k" is 39,000, not 39. Leaving it to moneyIn avoids reporting the same
+    // figure twice at two different magnitudes, where the bare reading would be
+    // both wrong and the one the caller sees first.
+    if (UNIT_SUFFIX.test(text.slice(match.index + match[0].length))) continue;
 
-    // "399.000" is three hundred and ninety-nine thousand in Vietnamese
-    // convention, whereas "15.6" is a decimal. Groups of exactly three digits
-    // after the separator mark a thousands separator.
-    const asGrouped = raw.replace(/[.,](?=\d{3}\b)/g, '');
-    const normalized = asGrouped.replace(',', '.');
-
-    const value = Number.parseFloat(normalized);
+    // English convention: comma groups thousands, dot is the decimal point.
+    const value = Number.parseFloat(raw.replace(/,(?=\d{3}\b)/g, ''));
     if (Number.isFinite(value)) values.push(value);
   }
 
@@ -278,10 +192,24 @@ function digitsIn(text: string): number[] {
 
 /**
  * Above this, a figure is treated as a price and gets the rounding tolerance
- * below. Beneath it a figure is a specification, where 15.6 inches is simply
- * not 16 inches and only an exact match will do.
+ * below. Beneath it a figure is a detail, where 15.6 inches is simply not 16
+ * inches and only an exact match will do.
  */
 const PRICE_THRESHOLD = 1000;
+
+/**
+ * How far a stated price may sit from the sourced one before it counts as
+ * invented.
+ *
+ * Some tolerance is necessary rather than merely convenient. Asked to write
+ * about something that costs 399,000, the model reaches for "under four hundred
+ * thousand" - which is both true and the natural way a person would say it.
+ * Demanding an exact match rejected that, and every rejection costs a Claude
+ * call and eventually fails the job over correct output. 15% is wide enough for
+ * ordinary rounding in either direction and far too narrow to let a fabricated
+ * figure through.
+ */
+const PRICE_TOLERANCE = 0.15;
 
 function isNumberAllowed(value: number, allowedNumbers: ReadonlySet<number>): boolean {
   for (const allowed of allowedNumbers) {
@@ -295,9 +223,8 @@ function isNumberAllowed(value: number, allowedNumbers: ReadonlySet<number>): bo
 }
 
 /** Every number info.json supports, from any field - not only the price. */
-function buildNumberWhitelist(info: ProductInfo | null): Set<number> {
+function buildNumberWhitelist(info: ProductInfo): Set<number> {
   const numbers = new Set<number>();
-  if (!info) return numbers;
 
   const harvest = (value: string | number | undefined) => {
     if (value === undefined) return;
@@ -306,17 +233,19 @@ function buildNumberWhitelist(info: ProductInfo | null): Set<number> {
       return;
     }
     for (const found of digitsIn(value)) numbers.add(found);
+    for (const found of moneyIn(value)) numbers.add(found);
   };
 
   harvest(info.price);
   harvest(info.name);
   harvest(info.category);
   harvest(info.brand);
+  harvest(info.cta);
   for (const feature of info.features ?? []) harvest(feature);
   for (const audience of info.targetAudience ?? []) harvest(audience);
 
-  // A price of 399000 is also spoken as "399 nghìn", so the shorthand counts as
-  // the same sourced fact rather than a new claim.
+  // A price of 399000 is also spoken as "399 thousand", so the shorthand counts
+  // as the same sourced fact rather than a new claim.
   if (info.price !== undefined) {
     const price = typeof info.price === 'number' ? info.price : digitsIn(info.price)[0];
     if (price !== undefined && price >= 1000) {
@@ -332,12 +261,11 @@ function buildNumberWhitelist(info: ProductInfo | null): Set<number> {
  * Everything the model is permitted to assert, normalised for comparison.
  *
  * Feature strings go in whole *and* word by word, because the model is expected
- * to rephrase "Chống ồn ANC" rather than quote it, and rejecting a legitimate
- * rewording would make the guard unusable.
+ * to rephrase "Two-year warranty included" rather than quote it, and rejecting
+ * a legitimate rewording would make the guard unusable.
  */
-function buildWhitelist(info: ProductInfo | null): Set<string> {
+function buildWhitelist(info: ProductInfo): Set<string> {
   const allowed = new Set<string>();
-  if (!info) return allowed;
 
   const add = (value: string | number | undefined) => {
     if (value === undefined) return;
@@ -356,15 +284,6 @@ function buildWhitelist(info: ProductInfo | null): Set<string> {
   for (const feature of info.features ?? []) add(feature);
   for (const audience of info.targetAudience ?? []) add(audience);
 
-  // A price of 399000 is legitimately written 399.000đ, 399k or "399 nghìn".
-  if (info.price !== undefined) {
-    const digits = String(info.price).replace(/\D/g, '');
-    if (digits) {
-      allowed.add(normalize(digits));
-      if (digits.length > 3) allowed.add(normalize(digits.slice(0, digits.length - 3)));
-    }
-  }
-
   return allowed;
 }
 
@@ -372,73 +291,36 @@ function isAllowed(text: string, allowed: Set<string>): boolean {
   const normalized = normalize(text);
   if (allowed.has(normalized)) return true;
 
-  // "399.000đ" should match a whitelisted 399000.
+  // "$399.00" should match a whitelisted 399.
   const digitsOnly = normalized.replace(/\D/g, '');
   if (digitsOnly && allowed.has(digitsOnly)) return true;
 
   return false;
 }
 
-/**
- * How far a stated price may sit from the sourced one before it counts as
- * invented.
- *
- * Some tolerance is necessary rather than merely convenient. Asked to write a
- * hook for a 399,000đ product, the model reaches for "dưới 400 nghìn" - which
- * is both true and the natural way a person would say it. Demanding an exact
- * match rejected that, and every rejection costs a Claude call and eventually
- * fails the job over correct output.
- *
- * 15% is wide enough for ordinary rounding in either direction and far too
- * narrow to let a fabricated figure through: nothing in this band can misstate
- * what the buyer will pay in a way that matters.
- */
-const PRICE_TOLERANCE = 0.15;
-
-/** Interprets "399.000đ", "399k", "400 nghìn", "1.2 triệu" as a number. */
-export function parseVietnameseMoney(text: string): number | null {
+/** Interprets "$39", "39k", "1.2 million", "39 dollars" as a number. */
+export function parseMoney(text: string): number | null {
   const lower = text.toLowerCase().trim();
 
-  const multiplier = /triệu/u.test(lower)
+  const multiplier = /\b(?:m|million)\b/u.test(lower)
     ? 1_000_000
-    : /tỷ/u.test(lower)
+    : /\b(?:bn|billion)\b/u.test(lower)
       ? 1_000_000_000
-      : /(?:^|\d\s*)(?:k|nghìn|ngàn)/u.test(lower)
+      : /\d\s*(?:k|thousand)\b/u.test(lower)
         ? 1_000
         : 1;
 
   const numeric = lower.match(/[\d.,]+/u)?.[0];
   if (!numeric) return null;
 
-  let value: number;
-  if (multiplier > 1) {
-    // With a unit attached, a lone separator followed by one or two digits is a
-    // decimal point ("1.2 triệu"); anything else is a thousands separator.
-    const decimal = numeric.match(/^(\d+)[.,](\d{1,2})$/u);
-    value = decimal
-      ? Number.parseFloat(`${decimal[1]}.${decimal[2]}`)
-      : Number.parseInt(numeric.replace(/[.,]/g, ''), 10);
-  } else {
-    value = Number.parseInt(numeric.replace(/[.,]/g, ''), 10);
-  }
-
+  const value = Number.parseFloat(numeric.replace(/,(?=\d{3}\b)/g, ''));
   if (!Number.isFinite(value)) return null;
+
   return value * multiplier;
 }
 
-/** True when a stated amount is a fair restatement of the sourced price. */
-function isPriceWithinTolerance(text: string, info: ProductInfo | null): boolean {
-  if (!info || info.price === undefined) return false;
-
-  const sourced = parseVietnameseMoney(String(info.price));
-  const stated = parseVietnameseMoney(text);
-  if (sourced === null || stated === null || sourced <= 0) return false;
-
-  return Math.abs(stated - sourced) / sourced <= PRICE_TOLERANCE;
-}
-
 function normalize(text: string): string {
-  return text.toLowerCase().replace(/[.,\s₫]/g, '').replace(/(đ|vnd|vnđ)$/u, '');
+  return text.toLowerCase().replace(/[.,\s$£€]/g, '');
 }
 
 interface TextField {
@@ -447,36 +329,17 @@ interface TextField {
   text: string;
 }
 
-function collectTextFields(draft: StoryboardDraft): TextField[] {
+function collectTextFields(draft: GuardableDraft): TextField[] {
   const fields: TextField[] = [
-    { sceneId: null, name: 'content.hook', text: draft.content.hook },
+    { sceneId: null, name: 'project.episodeTitle', text: draft.project.episodeTitle },
+    { sceneId: null, name: 'content.summary', text: draft.content.summary },
     { sceneId: null, name: 'content.narration', text: draft.content.narration },
-    { sceneId: null, name: 'content.cta', text: draft.content.cta },
   ];
 
   for (const scene of draft.scenes) {
-    fields.push({ sceneId: scene.id, name: 'headline', text: scene.headline });
+    fields.push({ sceneId: scene.id, name: 'title', text: scene.title });
     fields.push({ sceneId: scene.id, name: 'narration', text: scene.narration });
   }
 
   return fields;
-}
-
-function formatFeedback(violations: readonly FactViolation[]): string {
-  if (violations.length === 0) return '';
-
-  const lines = violations.map((v) => {
-    const where = v.sceneId ? `scene "${v.sceneId}" (${v.field})` : v.field;
-    return `- In ${where}: ${v.message}`;
-  });
-
-  return [
-    'The previous attempt asserted facts that are not present in info.json:',
-    ...lines,
-    '',
-    'Rewrite so that every number and every claim about price, specification,',
-    'warranty, promotion or certification comes from info.json. If a fact is not',
-    'in info.json, do not mention it at all - describe what is visible in the',
-    'photos instead.',
-  ].join('\n');
 }

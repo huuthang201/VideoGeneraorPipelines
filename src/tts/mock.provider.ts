@@ -11,13 +11,10 @@ import { getDurationSeconds } from '../video/ffprobe';
  *
  * This exists because Edge TTS is the pipeline's single point of failure. It is
  * an unofficial Microsoft endpoint that has repeatedly started rejecting
- * clients, and Vietnamese narration is a hard requirement (spec §7) - so
- * without a stand-in, one upstream outage would make the whole system
- * untestable and unrenderable, not merely voiceless.
- *
- * It is written before the real provider on purpose: every downstream stage can
- * then be built and tested offline, and the Edge integration becomes one
- * swappable piece rather than a prerequisite for all the others.
+ * clients, and narration is a hard requirement - so without a stand-in, one
+ * upstream outage would make the whole system untestable and unrenderable, not
+ * merely voiceless. It is also how a layout change gets checked in seconds
+ * rather than by waiting on ten minutes of speech.
  *
  * Any job that uses it is stamped `devMock` so a placeholder render can never
  * be mistaken for something publishable.
@@ -26,12 +23,26 @@ export class MockTTSProvider implements TTSProvider {
   readonly name = 'mock';
 
   /**
-   * Vietnamese is syllable-timed and written with syllables separated by
-   * spaces, so token count is a good proxy for length. ~5.2 syllables/second
-   * matches the measured pace of vi-VN-HoaiMyNeural at +5%.
+   * Words per second, taken from the module's own measured pace.
+   *
+   * It has to be the module's, and the gap is not small: the podcast reads 139
+   * words a minute in English and a fact short 318 syllables a minute in
+   * Vietnamese, so one shared number would make every mock render of one of
+   * them come out at roughly half or double its real length - and a mock render
+   * exists precisely to check the layout at the length the real thing will be.
+   *
+   * A whitespace token is a word in English and a syllable in Vietnamese, which
+   * is why the two figures are not comparable but each is a fair proxy: within
+   * one language the variation between short and long tokens averages out over
+   * a paragraph.
    */
-  private static readonly SYLLABLES_PER_SECOND = 5.2;
+  private readonly wordsPerSecond: number;
+
   private static readonly LEAD_IN_MS = 120;
+
+  constructor(wordsPerMinute: number) {
+    this.wordsPerSecond = wordsPerMinute / 60;
+  }
 
   async synthesize(input: TTSInput): Promise<TTSResult> {
     const tokens = input.text.split(/\s+/).filter(Boolean);
@@ -39,7 +50,7 @@ export class MockTTSProvider implements TTSProvider {
       throw new Error('MockTTSProvider received empty text; narration is mandatory');
     }
 
-    const speechMs = (tokens.length / MockTTSProvider.SYLLABLES_PER_SECOND) * 1000;
+    const speechMs = (tokens.length / this.wordsPerSecond) * 1000;
     const totalMs = MockTTSProvider.LEAD_IN_MS + speechMs + 300;
 
     await mkdir(input.outDir, { recursive: true });

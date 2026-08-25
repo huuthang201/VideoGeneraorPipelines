@@ -1,68 +1,97 @@
 import path from 'node:path';
-import { mkdirSync } from 'node:fs';
-import { mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { Router } from 'express';
-import multer from 'multer';
-import { loadConfig, jobPaths } from '../../src/config/env';
-import { MINIMUM_IMAGES, SUPPORTED_IMAGE_EXTENSIONS } from '../../src/domain/project';
+import type { ModuleContext } from '../lib/moduleContext';
+import { jobPaths, type AppConfig } from '../../src/config/env';
 import { listStoryboardVersions } from '../../src/pipeline/storyboard-store';
 import { readLock } from '../../src/pipeline/lock';
 import { exists, listProjectIds, readProjectSummary } from '../lib/projectStatus';
-import { writeProjectMeta } from '../lib/projectMeta';
-import { readManifest } from '../../src/cli/generate-broll';
+import { readLibrarySummary } from '../lib/librarySummary';
+import { readProjectMeta, writeProjectMeta } from '../lib/projectMeta';
+import { storedChannel } from '../../src/publish/youtube';
 import { isValidProjectId, slugify, uniqueProjectId } from '../lib/slug';
-import { runCli } from '../lib/processRunner';
 
-const config = loadConfig();
-const uploadDir = path.join(config.runtimeDir, 'uploads');
-// multer does not create its `dest` directory itself.
-mkdirSync(uploadDir, { recursive: true });
-const upload = multer({ dest: uploadDir, limits: { fileSize: 30 * 1024 * 1024 } });
 
-export const projectsRouter = Router();
+/**
+ * One router per module.
+ *
+ * A factory rather than a singleton because the server hosts both pipelines at
+ * once, and each needs its own `config` - different job directory, different
+ * cache, different YouTube credentials. Mounting the same instance under both
+ * prefixes would have given whichever module loaded first to both.
+ */
+export function createProjectsRouter(ctx: ModuleContext) {
+  const { config, module } = ctx;
+  const router = Router();
 
-projectsRouter.get('/', async (_req, res) => {
+router.get('/', async (_req, res) => {
   const ids = await listProjectIds(config);
   const summaries = await Promise.all(ids.map((id) => readProjectSummary(config, id)));
   summaries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   res.json(summaries);
 });
 
-projectsRouter.get<{ id: string }>('/:id', async (req, res) => {
+router.get<{ id: string }>('/:id', async (req, res) => {
   const id = req.params.id;
   if (!isValidProjectId(id)) return res.status(400).json({ error: 'Id dự án không hợp lệ' });
 
   const paths = jobPaths(config.jobsDir, id);
   if (!(await exists(paths.root))) return res.status(404).json({ error: 'Không tìm thấy dự án' });
 
-  const [summary, briefRaw, storyboardRaw, versions, previewFilenames, brollImages] = await Promise.all([
+  const [summary, briefRaw, storyboardRaw, versions, publishRaw, uploadRaw, channel, library] =
+    await Promise.all([
     readProjectSummary(config, id),
     readFile(paths.briefJson, 'utf8').catch(() => null),
     readFile(paths.storyboardJson, 'utf8').catch(() => null),
     listStoryboardVersions(paths),
-    readdir(paths.preview)
-      .then((files) => files.filter((f) => f.toLowerCase().endsWith('.jpg')).sort())
-      .catch(() => []),
-    readManifest(paths.generated),
+    // Written by the pipeline after a successful render; absent until then.
+    readFile(path.join(paths.output, 'youtube.json'), 'utf8').catch(() => null),
+    readFile(path.join(paths.output, 'youtube-upload.json'), 'utf8').catch(() => null),
+    // Recorded at consent time, so naming the channel costs no API call.
+    storedChannel({
+      clientId: config.youtube.clientId,
+      clientSecret: config.youtube.clientSecret,
+      tokenPath: config.youtube.tokenPath,
+    }).catch(() => null),
+    /*
+     * The shared library, echoed here so the project screen can draw its
+     * backdrop picker - and refuse to generate when there is nothing - without
+     * a second request. The project owns none of it.
+     *
+     * Podcast only: the fact module searches for its photographs, so there is
+     * no library to pick from and the field is absent rather than empty.
+     */
+    module.id === 'podcast' ? readLibrarySummary(config).catch(() => null) : Promise.resolve(null),
   ]);
 
   res.json({
     ...summary,
     brief: briefRaw ? JSON.parse(briefRaw) : null,
+    publish: publishRaw ? JSON.parse(publishRaw) : null,
+    upload: uploadRaw ? JSON.parse(uploadRaw) : null,
+    // The button is pointless without credentials, and saying so on the screen
+    // beats a 400 after the click.
+    youtubeReady: Boolean(config.youtube.clientId && config.youtube.clientSecret),
+    youtubeChannel: channel,
     storyboard: storyboardRaw ? JSON.parse(storyboardRaw) : null,
     versions,
-    previewFilenames,
-    brollImages,
+    /*
+     * What VIDEO_TARGET_DURATION is set to, so the length box can show a real
+     * number instead of an empty field with a placeholder explaining where the
+     * number would have come from. The page has no other way to know it - it is
+     * server configuration, and there is no build step to bake it in.
+     */
+    defaultTargetSeconds: config.video.targetDuration,
+    ...(library ? { library } : {}),
   });
 });
 
 /**
- * Creating a project only needs a name. Images are a separate step
- * (`POST /:id/images`) so a folder can exist - and be seen in the grid -
- * before anyone has picked photos for it; nothing that needs the photos
- * (suggest-brief, generate-storyboard, generate) can run until enough exist.
+ * A project is a name, a brief and a storyboard - no images of its own. The
+ * components come from the shared libraries, so there is nothing to upload
+ * here; what a project cannot do is generate while those libraries are empty.
  */
-projectsRouter.post('/', async (req, res) => {
+router.post('/', async (req, res) => {
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
   if (!name) return res.status(400).json({ error: 'Thiếu tên dự án' });
 
@@ -71,74 +100,55 @@ projectsRouter.post('/', async (req, res) => {
   await writeProjectMeta(jobPaths(config.jobsDir, id).root, {
     displayName: name,
     createdAt: new Date().toISOString(),
+    /*
+     * Scheduled, matching `readProjectMeta`'s own fallback.
+     *
+     * These two disagreed, and the create path won: every project made through
+     * the UI was written as `none` while a project with no meta.json at all
+     * defaulted to `schedule`. The effect was that the tool's whole purpose -
+     * a queue that publishes on its own cadence - was off by default, and
+     * every project needed the same click before it did the thing it was for.
+     */
+    autoPublish: 'schedule',
   });
 
   res.status(201).json(await readProjectSummary(config, id));
 });
 
-projectsRouter.post<{ id: string }>('/:id/images', upload.array('images'), async (req, res) => {
+/**
+ * What should happen when this project finishes rendering.
+ *
+ * Its own route rather than part of the brief: the brief describes the video
+ * and is read by the engine, while this is a workflow choice the UI acts on
+ * afterwards.
+ */
+router.put<{ id: string }>('/:id/auto-publish', async (req, res) => {
   const id = req.params.id;
-  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+  if (!isValidProjectId(id)) return res.status(400).json({ error: 'Id dự án không hợp lệ' });
 
-  if (!isValidProjectId(id)) {
-    await cleanupTempFiles(files);
-    return res.status(400).json({ error: 'Id dự án không hợp lệ' });
+  /*
+   * `autoPublish`, not `mode`.
+   *
+   * This route read `mode` while the only caller had always sent
+   * `autoPublish`, so every change to the dropdown was answered with a 400 and
+   * nothing was ever saved. It went unnoticed because the call had no error
+   * branch at all: the rejection went to the console and the control carried on
+   * showing the value it had failed to store. Naming the field after the thing
+   * it sets is also what stops that drifting apart again.
+   */
+  const autoPublish = req.body?.autoPublish;
+  if (autoPublish !== 'none' && autoPublish !== 'now' && autoPublish !== 'schedule') {
+    return res.status(400).json({ error: 'Giá trị không hợp lệ' });
   }
 
   const paths = jobPaths(config.jobsDir, id);
-  if (!(await exists(paths.root))) {
-    await cleanupTempFiles(files);
-    return res.status(404).json({ error: 'Không tìm thấy dự án' });
-  }
-  if (await readLock(paths)) {
-    await cleanupTempFiles(files);
-    return res.status(409).json({ error: 'Dự án đang chạy' });
-  }
+  const meta = await readProjectMeta(paths.root, id);
+  await writeProjectMeta(paths.root, { ...meta, autoPublish });
 
-  const validFiles = files.filter((f) =>
-    (SUPPORTED_IMAGE_EXTENSIONS as readonly string[]).includes(
-      path.extname(f.originalname).toLowerCase(),
-    ),
-  );
-  await cleanupTempFiles(files.filter((f) => !validFiles.includes(f)));
-
-  if (validFiles.length === 0) {
-    return res.status(400).json({ error: 'Không có ảnh hợp lệ trong lần tải lên này' });
-  }
-
-  const stagingDir = path.join(uploadDir, `stage-${id}-${Date.now()}`);
-  await mkdir(stagingDir, { recursive: true });
-
-  try {
-    await Promise.all(
-      validFiles.map((f) => rename(f.path, path.join(stagingDir, path.basename(f.originalname)))),
-    );
-
-    const result = await runCli(['prepare', stagingDir, '--id', id]);
-    const summary = await readProjectSummary(config, id);
-
-    // `prepare` fails the whole call below MINIMUM_IMAGES, but every image
-    // that *did* process successfully was already written to preview/images -
-    // report the running total instead of a scary raw CLI error.
-    if (result.code !== 0 && !summary.hasEnoughImages) {
-      return res.status(200).json({
-        ...summary,
-        error: `Đã lưu ${summary.imageCount}/${MINIMUM_IMAGES} ảnh — cần thêm ít nhất ${MINIMUM_IMAGES - summary.imageCount} ảnh nữa.`,
-      });
-    }
-    if (result.code !== 0) {
-      return res
-        .status(500)
-        .json({ error: result.stderr.trim() || result.stdout.slice(-500) || 'Xử lý ảnh thất bại' });
-    }
-
-    res.status(200).json(summary);
-  } finally {
-    await rm(stagingDir, { recursive: true, force: true });
-  }
+  res.json(await readProjectSummary(config, id));
 });
 
-projectsRouter.delete<{ id: string }>('/:id', async (req, res) => {
+router.delete<{ id: string }>('/:id', async (req, res) => {
   const id = req.params.id;
   if (!isValidProjectId(id)) return res.status(400).json({ error: 'Id dự án không hợp lệ' });
 
@@ -149,6 +159,5 @@ projectsRouter.delete<{ id: string }>('/:id', async (req, res) => {
   res.status(204).end();
 });
 
-async function cleanupTempFiles(files: Express.Multer.File[]): Promise<void> {
-  await Promise.all(files.map((f) => rm(f.path, { force: true })));
+  return router;
 }

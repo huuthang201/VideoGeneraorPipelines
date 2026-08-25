@@ -1,70 +1,39 @@
-# Voice references
+# Voices
 
-Put a reference clip here to clone a voice:
+Nothing needs to go in this folder.
+
+The narrator is a hosted Edge neural voice, chosen by name in `.env`:
 
 ```
-assets/voices/adam_vi.wav
+TTS_VOICE=en-US-AvaNeural
 ```
 
-Requirements:
+There is no model to download and no reference clip to record. This directory is
+kept because `assets/music/` and `assets/sfx/` sit beside it and the three are
+referenced together in the docs; if a future engine needs a local voice file,
+here is where it goes.
 
-- **3–8 seconds** of clean speech, one speaker, no music or background noise
-- **WAV**, mono preferred
-- The speaker should sound the way you want every video to sound: male, deep,
-  firm, clearly articulated, narration pace
+## Choosing a voice
 
-The internal voice name is `adam_vi`, set by `TTS_VOICE` in `.env`.
-
-## Cloning needs the PyTorch engine
-
-VieNeu's documentation is explicit: *"Cloning & denoising require PyTorch
-engine; built-in voices work everywhere."* The default install is ONNX-only and
-cannot clone. To use a reference clip:
+Names are not descriptions. Render the shortlist and listen to it:
 
 ```bash
-./.venv-vieneu/bin/python3 -m pip install 'vieneu[legacy]'
+npm run tts:sample      # writes runtime/voice-samples/*.mp3
+npm run tts:voices      # every English voice the service offers
 ```
 
-That pulls in torch, transformers and neucodec — several gigabytes.
+The shortlist comes from the service's own personality tags:
 
-## Pick by measured pitch, not by name
+| Voice | Tag |
+|---|---|
+| `en-US-AriaNeural` | News, Novel (the default) |
+| `en-US-MichelleNeural` | News, Novel — warmer than Aria |
+| `en-US-EmmaMultilingualNeural` | Cheerful, Clear, Conversational |
+| `en-US-AvaMultilingualNeural` | Expressive, Caring, Pleasant |
+| `en-GB-LibbyNeural` | youngest-sounding British adult voice |
+| `en-US-AnaNeural` | Cartoon, Cute — a child voice that blurs over a long read |
 
-```bash
-npm run tts:compare
-```
-
-Synthesises every male preset and prints its median pitch. Worth doing before
-trusting a style description: asked for a deep narration voice, the
-obvious-looking pick by name turned out to be one of the *highest* male presets
-at 151 Hz, while the deepest sits at 100 Hz. A deep "Adam"-style read is roughly
-95-110 Hz.
-
-| Voice | Pitch | Region |
-|---|---|---|
-| Đức Trí | 100 Hz | Southern |
-| Phạm Tuyên | 108 Hz | Northern (default) |
-| Xuân Vĩnh | 123 Hz | Southern |
-| Thái Sơn | 128 Hz | Southern |
-| Quang Sơn | 135 Hz | Central |
-| Thanh Bình | 151 Hz | Northern |
-| Minh Triết | 153 Hz | Southern |
-| Minh Đức | 155 Hz | Northern |
-
-## Or use a built-in voice instead
-
-VieNeu ships 19 preset Vietnamese voices that work on the light install with no
-reference clip at all. List them:
-
-```bash
-npm run tts:voices
-```
-
-Then set the name you want in `.env` and leave the reference empty:
-
-```
-TTS_VOICE=<preset name>
-TTS_REFERENCE_AUDIO=
-```
-
-The pipeline never silently substitutes a voice: if `TTS_REFERENCE_AUDIO` names
-a file that is not there, the job fails with that path in the error.
+There is no expression control beyond the voice: this endpoint ignores SSML
+styles (`mstts:express-as`), so how lively the read is comes from which voice
+you pick, plus `TTS_RATE`, `TTS_PITCH` and `TTS_VOLUME`. Changing either changes how many
+words fit in an episode — see `WORDS_PER_MINUTE` in `src/domain/config.ts`.

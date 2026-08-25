@@ -1,6 +1,6 @@
+import path from 'node:path';
 import { access, readdir, readFile } from 'node:fs/promises';
 import { jobPaths, type AppConfig } from '../../src/config/env';
-import { MINIMUM_IMAGES } from '../../src/domain/project';
 import { readLock } from '../../src/pipeline/lock';
 import { readProjectMeta } from './projectMeta';
 
@@ -14,14 +14,15 @@ export interface ProjectSummary {
   /** Raw job.json fields, for showing a live stage instead of just the badge. */
   status: string | null;
   stage: string | null;
-  imageCount: number;
-  hasEnoughImages: boolean;
   hasStoryboard: boolean;
   hasVideo: boolean;
   scenes: number | null;
   durationSeconds: number | null;
   errorMessage: string | null;
   thumbnailUrl: string | null;
+  /** Set once the video has been uploaded, so the grid can say so. */
+  youtubeUrl: string | null;
+  autoPublish: 'none' | 'now' | 'schedule';
 }
 
 interface JobJsonShape {
@@ -47,24 +48,27 @@ export async function listProjectIds(config: AppConfig): Promise<string[]> {
     .sort();
 }
 
-/** Processed preview images are what every downstream action (brief, storyboard) needs. */
-export async function countPreviewImages(previewDir: string): Promise<number> {
-  const entries = await readdir(previewDir).catch(() => [] as string[]);
-  return entries.filter((f) => f.toLowerCase().endsWith('.jpg')).length;
-}
-
 export async function readProjectSummary(config: AppConfig, projectId: string): Promise<ProjectSummary> {
   const paths = jobPaths(config.jobsDir, projectId);
 
-  const [meta, jobRaw, lock, hasStoryboard, hasVideo, hasThumb, imageCount] = await Promise.all([
+  const [meta, jobRaw, lock, hasStoryboard, hasVideo, hasThumb, uploadRaw] = await Promise.all([
     readProjectMeta(paths.root, projectId),
     readFile(paths.jobJson, 'utf8').catch(() => null),
     readLock(paths),
     exists(paths.storyboardJson),
     exists(paths.videoMp4),
     exists(paths.thumbnailJpg),
-    countPreviewImages(paths.preview),
+    readFile(path.join(paths.output, 'youtube-upload.json'), 'utf8').catch(() => null),
   ]);
+
+  let youtubeUrl: string | null = null;
+  if (uploadRaw) {
+    try {
+      youtubeUrl = (JSON.parse(uploadRaw) as { url?: string }).url ?? null;
+    } catch {
+      youtubeUrl = null;
+    }
+  }
 
   let job: JobJsonShape | null = null;
   if (jobRaw) {
@@ -88,13 +92,15 @@ export async function readProjectSummary(config: AppConfig, projectId: string): 
     badge,
     status: lock ? (job?.status ?? 'PENDING') : (job?.status ?? null),
     stage: lock ? (job?.stage ?? null) : null,
-    imageCount,
-    hasEnoughImages: imageCount >= MINIMUM_IMAGES,
     hasStoryboard,
     hasVideo,
     scenes: job?.scenes ?? null,
     durationSeconds: job?.durationSeconds ?? null,
     errorMessage: badge === 'FAILED' ? (job?.error?.message ?? null) : null,
-    thumbnailUrl: hasThumb ? `/media/${projectId}/thumbnail.jpg` : null,
+    // Module-scoped, like every other URL the page uses: the two modules keep
+    // separate job directories, so `/media/<id>/…` alone is ambiguous.
+    thumbnailUrl: hasThumb ? `/media/${config.module}/${projectId}/thumbnail.jpg` : null,
+    youtubeUrl,
+    autoPublish: meta.autoPublish,
   };
 }

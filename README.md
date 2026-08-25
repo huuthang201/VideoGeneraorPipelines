@@ -1,143 +1,121 @@
-# Auto Short Video Generator
+# Video Generator Pipelines
 
-Turns a folder of product photos into a 1080×1920 MP4 with Vietnamese narration.
+Hai dây chuyền làm video trong cùng một engine.
 
-See [HUONG-DAN.md](HUONG-DAN.md) for the day-to-day guide (Vietnamese).
+| | **Podcast** | **Fact Shorts** |
+|---|---|---|
+| Kết quả | MP4 dài 5-10 phút | MP4 dài 30-60 giây |
+| Khung hình | 1920x1080 (ngang) | 1080x1920 (dọc) |
+| Lời đọc | tiếng Anh | tiếng Việt |
+| Phụ đề | song ngữ Anh + Việt | một dòng tiếng Việt |
+| Giọng | Edge TTS (`en-US-AriaNeural`) | VieNeu-TTS chạy máy (`Thanh Bình`) |
+| Ảnh nền | thư viện chung do bạn tải lên | tự tìm trên Openverse khi dựng |
+| Đăng lên | kênh YouTube riêng, mỗi 8 giờ | kênh YouTube riêng, mỗi 2 giờ |
 
-## Vietnamese TTS
+Hai module dùng chung khoảng hai phần ba code, nhưng **không dùng chung dữ liệu
+và không dùng chung tài khoản YouTube**: mỗi bên có thư mục `runtime/` riêng,
+file `.env` riêng và OAuth client riêng.
 
-**Engine:** VieNeu-TTS v3 Turbo — on-device, 48 kHz, no API key, no per-character
-billing.
-
-**Voice:** set by `TTS_VOICE`. Either one of 19 built-in Vietnamese presets, or a
-voice cloned from a reference clip.
-
-**Reference:** `assets/voices/adam_vi.wav` (see
-[assets/voices/README.md](assets/voices/README.md))
-
-### Install
+## Cài đặt
 
 ```bash
+nvm use                 # Node 22 (bắt buộc: sharp và Remotion)
 npm install
-npm run setup:vieneu     # Python 3.10-3.13 venv + vieneu + model download
+npm run setup:python    # venv + edge-tts (podcast, và fallback cho fact)
+npm run setup:vieneu    # venv + VieNeu-TTS (fact)
 ```
 
-VieNeu needs Python 3.10–3.13. The script finds a suitable interpreter, or tells
-you how to install one (`brew install python@3.12` on macOS).
-
-### Choosing a voice
+Rồi tạo cấu hình:
 
 ```bash
-npm run tts:voices
+cp .env.example .env
+cp .env.podcast.example .env.podcast
+cp .env.fact.example .env.fact
 ```
 
-Male, Northern, narration-style presets — closest to a deep "Adam" read:
+`.env` giữ những gì hai bên dùng chung; `.env.<module>` giữ phần riêng và **ghi
+đè** lên `.env`. Điền `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` riêng cho
+từng module — đó là hai kênh khác nhau.
 
-Ranked by measured median pitch — lower is deeper. Worth checking the number
-rather than the style label: the deepest-sounding name is not the deepest voice.
-
-| Voice | Pitch | Region | Style |
-|---|---|---|---|
-| `Đức Trí` | 100 Hz | Southern | storytelling |
-| `Phạm Tuyên` | 108 Hz | Northern | natural |
-| `Xuân Vĩnh` | 123 Hz | Southern | natural |
-| `Thái Sơn` | 128 Hz | Southern | storytelling |
-| `Quang Sơn` | 135 Hz | Central | natural |
-| `Thanh Bình` | 151 Hz | Northern | storytelling (default) |
-| `Minh Triết` | 153 Hz | Southern | news |
-| `Minh Đức` | 155 Hz | Northern | news |
+## Chạy
 
 ```bash
-npm run tts:compare     # synthesise every male preset and measure its pitch
+npm run ui                                   # giao diện web, cả hai module, cổng 4000
+npm run podcast -- generate <project>        # dựng một tập podcast
+npm run fact    -- generate <project>        # dựng một video fact
 ```
 
-Set it in `.env`:
+Trên giao diện web, mỗi dự án có **một nút "Bắt đầu" chạy hết mọi việc**:
 
-```env
-TTS_ENGINE=vieneu
-TTS_VOICE=Thanh Bình
-TTS_REFERENCE_AUDIO=
+```
+Ý tưởng → Kịch bản → Ảnh → Giọng đọc → Dựng video → Kiểm tra → Đăng YouTube
 ```
 
-### Cloning a specific voice
+Màn hình dự án vẽ đúng bảy bước đó thành các ô nối nhau bằng mũi tên: ô đang
+làm thì sáng lên và mũi tên dẫn vào nó chạy, ô đã xong hiện dấu tích kèm một
+dòng cho biết nó tạo ra cái gì, bước dựng video có thanh tiến độ đếm khung
+hình. Chọn nhiều dự án rồi bấm "Chạy tất cả" thì chúng chạy lần lượt.
 
-Put a clean 3–8 second WAV clip at `assets/voices/adam_vi.wav`, then:
+> ⚠️ **Bước cuối đăng lên YouTube theo ô "Sau khi dựng xong" của từng dự án, và
+> ô đó mặc định là "Lên lịch".** Nghĩa là một dự án chưa ai chỉnh sẽ *tự đăng*
+> khi chạy xong. Đây là hành vi có từ trước, nút "Bắt đầu" chỉ làm nó dễ chạm
+> tới hơn. Đổi sang "Không đăng" nếu muốn dừng ở bước dựng.
 
-```env
-TTS_VOICE=adam_vi
-TTS_REFERENCE_AUDIO=assets/voices/adam_vi.wav
-```
+Không có module mặc định. Đây là chủ ý: hai bên có thư mục công việc, bộ nhớ
+đệm và **thông tin đăng nhập YouTube khác nhau**, nên đoán sai module nghĩa là
+chạy nhầm dây chuyền và đăng nhầm kênh.
 
-Cloning needs the PyTorch engine, which the default install leaves out because
-it is several gigabytes:
+Xem toàn bộ lệnh của một module:
 
 ```bash
-./.venv-vieneu/bin/python3 -m pip install 'vieneu[legacy]'
+npm run podcast -- --help
+npm run fact -- --help
 ```
 
-The reference clip is encoded once, registered with `add_voice` and persisted
-with `save_voices`, so later runs load the cached embedding rather than
-re-analysing the clip.
+### Sửa giao diện
 
-If `TTS_REFERENCE_AUDIO` names a file that is not there, the job fails and names
-the path. It never silently substitutes another voice — a series of videos that
-quietly changes speaker halfway is worse than one that stops.
-
-### Test the voice without rendering
+Giao diện nằm trong `ui/` (React + Tailwind + shadcn/ui), build bằng Vite ra
+`server/public/`:
 
 ```bash
-npm run tts:test        # writes tmp/test_adam_vi.wav
-afplay tmp/test_adam_vi.wav
+npm run ui:dev      # dev server có hot reload, cổng 5173, tự proxy API sang 4000
+npm run ui:build    # build ra server/public/ để `npm run ui` phục vụ
 ```
 
-### CPU / GPU
+`server/public/` là **kết quả build**, không phải mã nguồn — sửa trực tiếp ở đó
+sẽ mất khi build lần sau.
 
-CUDA is used when available, CPU otherwise, chosen at startup and logged:
-
-```
-[vieneu] loading VieNeu-TTS v3 Turbo on CPU...
-[vieneu] model ready in 4.9s, 19 preset voices
-```
-
-On Apple Silicon this runs on CPU via ONNX. Model load is roughly 5 seconds
-after the first download; synthesis of a 20-second narration takes about 15
-seconds.
-
-The model is loaded **once per run** by a long-lived worker process, so a batch
-of videos pays the startup cost a single time.
-
-### Subtitle timing
-
-VieNeu returns audio only — unlike the Edge service it replaced, it reports no
-word boundaries. Rather than add a forced-alignment model, narration is
-synthesised sentence by sentence so every sentence boundary is measured, and
-word positions are interpolated within each sentence by syllable weight.
-
-Scene cuts fall on sentence boundaries and stay exact; caption highlighting is
-accurate to within a sentence rather than drifting across the whole video.
-
-### Other engines
-
-`TTS_ENGINE` also accepts:
-
-- `edge` — Microsoft Edge TTS. No model download and runs on Python 3.7+, so it
-  remains the fallback on a machine where VieNeu will not install. Two
-  Vietnamese voices only.
-- `mock` — silent audio for offline development. Stamped `devMock: true` in
-  `job.json` and never published.
-
-## Running the pipeline
+### Vòng lặp nhanh khi sửa code
 
 ```bash
-npm run prepare:project -- workspace/AI-Shorts/01_INPUT/<project>
-npm run generate -- <project>
-```
-
-Full command reference in [HUONG-DAN.md](HUONG-DAN.md).
-
-## Development
-
-```bash
-npm test
 npm run typecheck
+npm run podcast -- generate <project> --mock-tts --no-publish --force
+npm run fact    -- generate <project> --mock-tts --no-publish --force
 ```
+
+`--mock-tts` dùng audio câm nhưng đúng độ dài thật (theo tốc độ đọc đã đo của
+từng module), nên bố cục kiểm tra được trong vài chục giây thay vì phải chờ
+tổng hợp giọng. Video dựng bằng nó bị đánh dấu `devMock: true` và không được
+đăng.
+
+Vì phần lớn code giờ dùng chung, **hãy kiểm tra cả hai module** sau mỗi thay
+đổi.
+
+## Giao diện web
+
+`npm run ui` mở một trang duy nhất cho cả hai dây chuyền, chuyển qua lại bằng ô
+chọn ở góc trái trên. Lựa chọn nằm trong URL (`?m=podcast`, `?m=fact`) nên tải
+lại trang hay gửi link cho người khác đều giữ đúng module.
+
+Màn hình thư viện ảnh chỉ xuất hiện ở module Podcast — module Fact tự tìm ảnh
+nên không có gì để quản lý.
+
+## Tài liệu
+
+- [CLAUDE.md](CLAUDE.md) — kiến trúc, ranh giới giữa hai module, và những quy
+  tắc được bảo đảm bằng code chứ không bằng quy ước.
+- [docs/modules/](docs/modules/) — ghi chú kỹ thuật gốc của từng module, giữ
+  nguyên từ trước khi gộp: [podcast](docs/modules/podcast.md),
+  [fact](docs/modules/fact.md), và hai bản hướng dẫn tiếng Việt đi kèm. Chúng có
+  trước khi gộp, nên chỗ nào nói về bố cục hay cấu hình thì code hiện tại đúng
+  hơn — nhưng *lý do* đằng sau từng con số đã tinh chỉnh thì nằm ở đó.

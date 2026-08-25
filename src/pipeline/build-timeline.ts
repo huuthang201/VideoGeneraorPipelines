@@ -1,14 +1,16 @@
-import type { Storyboard } from '../domain/storyboard';
 import type { ProcessedImage } from '../domain/project';
 import type { CaptionPage, Timeline, TimelineScene } from '../domain/timeline';
-import { SCENE_DURATION_BOUNDS } from '../domain/config';
+import { creditLine, type ImageCredit } from '../image/credit';
+import type { ModuleId, Pacing } from '../domain/config';
+import type { SceneLike, StoryboardLike } from '../modules/contract';
 import type { WordTiming } from '../tts/types';
 import { alignByProportion, alignScenesToWords, type AlignmentResult } from '../tts/align';
+import { estimateWordTimings } from '../tts/estimate-words';
 import { defaultFitFor } from '../remotion/layout/fit';
 
 /**
  * Turns a storyboard plus a measured voice track into the frame-exact Timeline
- * that Remotion renders (plan §2.2).
+ * that Remotion renders.
  *
  * This is the single place where seconds become frames. Everything upstream
  * talks in text and milliseconds; everything downstream sees only integers.
@@ -20,16 +22,59 @@ import { defaultFitFor } from '../remotion/layout/fit';
  * so it has to be exhaustively testable without rendering anything.
  */
 
-export interface BuildTimelineInput {
-  storyboard: Storyboard;
-  images: readonly ProcessedImage[];
+/** One scene's photograph, already downloaded and normalised. */
+export interface SceneBackdrop {
+  image: ProcessedImage;
+  /** Null for a hand-assembled timeline whose picture names no source. */
+  credit: ImageCredit | null;
+}
+
+export interface BuildTimelineInput<S extends SceneLike> {
+  storyboard: StoryboardLike<S>;
+  /** Stamped into the timeline so Remotion can pick the right theme pack. */
+  module: ModuleId;
+  /**
+   * Scene-duration bounds and speaking pace, from the module.
+   *
+   * A parameter rather than an import because the two modules disagree by an
+   * order of magnitude - a podcast scene may run forty-five seconds where a
+   * short's ceiling is twelve - and a constant that was right for one would
+   * silently clamp every scene of the other.
+   */
+  pacing: Pacing;
+  /** See `defaultFitFor` - the two modules crop very differently. */
+  coverTolerance: number;
+  /**
+   * Turns a scene's measured words into subtitle pages.
+   *
+   * Supplied by the module because the two subtitle very differently: one line
+   * broken at heard pauses, or two lines with a translation divided across
+   * them. See each module's `captions.ts`.
+   */
+  buildCaptions: (input: {
+    words: readonly WordTiming[];
+    sceneStartMs: number;
+    durationInFrames: number;
+    fps: number;
+    scene: S;
+  }) => CaptionPage[];
+  /**
+   * The photograph for each scene, keyed by scene id.
+   *
+   * Keyed by scene rather than looked up by filename, which is what this took
+   * when only the podcast existed and its storyboards named files in a library.
+   * The fact module has no library to name a file in - it searches for each
+   * scene's `imageQuery` and hands back whatever it found - so the scene id is
+   * the only thing both modules can agree on.
+   */
+  backdrops: ReadonlyMap<string, SceneBackdrop>;
   /** Path to voice.mp3 relative to the Remotion public dir, or null pre-TTS. */
   voiceSrc: string | null;
   /** Measured container length in seconds. 0 when there is no voice. */
   voiceDurationSec: number;
   words: readonly WordTiming[];
-  /** Maps a source filename to its path relative to the public dir. */
-  imageSrcFor: (filename: string) => string;
+  /** Maps a processed image to its path relative to the public dir. */
+  imageSrcFor: (image: ProcessedImage) => string;
   music?: { src: string; volume: number } | null;
 }
 
@@ -40,7 +85,7 @@ export interface BuildTimelineOutput {
     usedFallbackAlignment: boolean;
     clampedScenes: string[];
     /**
-     * Scenes that run longer than SCENE_DURATION_BOUNDS.maxSeconds.
+     * Scenes that run longer than the module's `pacing.sceneDuration.maxSeconds`.
      *
      * Not an error and not clamped: when the length came from measured audio,
      * shortening the scene would cut the narration off. It does mean the same
@@ -54,12 +99,15 @@ export interface BuildTimelineOutput {
   };
 }
 
-export function buildTimeline(input: BuildTimelineInput): BuildTimelineOutput {
-  const { storyboard, images, words, voiceDurationSec } = input;
+export function buildTimeline<S extends SceneLike>(
+  input: BuildTimelineInput<S>,
+): BuildTimelineOutput {
+  const { storyboard, backdrops, words, voiceDurationSec, pacing } = input;
+  const bounds = pacing.sceneDuration;
   const fps = storyboard.video.fps;
   const scenes = storyboard.scenes;
 
-  const imageByName = new Map(images.map((img) => [img.filename, img]));
+  const frameAspect = storyboard.video.width / storyboard.video.height;
 
   const alignment = resolveAlignment(
     scenes.map((s) => ({ id: s.id, narration: s.narration })),
@@ -73,15 +121,22 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineOutput {
   const hasMeasuredAudio = alignment !== null && !alignment.usedFallback && voiceMs > 0;
 
   const durations = hasMeasuredAudio
-    ? tileAcrossAudio(alignment!.scenes.map((s) => s.startMs), voiceMs, fps, scenes, clampedScenes)
+    ? tileAcrossAudio(
+        alignment!.scenes.map((s) => s.startMs),
+        voiceMs,
+        fps,
+        scenes,
+        clampedScenes,
+        bounds.minSeconds,
+      )
     : scenes.map((scene, index) => {
         const aligned = alignment?.scenes[index];
         const spokenSec = aligned ? (aligned.endMs - aligned.startMs) / 1000 : scene.duration;
-        const withPadding = spokenSec + SCENE_DURATION_BOUNDS.tailPaddingSeconds;
+        const withPadding = spokenSec + bounds.tailPaddingSeconds;
 
         const clamped = Math.min(
-          SCENE_DURATION_BOUNDS.maxSeconds,
-          Math.max(SCENE_DURATION_BOUNDS.minSeconds, withPadding),
+          bounds.maxSeconds,
+          Math.max(bounds.minSeconds, withPadding),
         );
         if (Math.abs(clamped - withPadding) > 1e-6) clampedScenes.push(scene.id);
 
@@ -97,51 +152,66 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineOutput {
     const from = cursor;
     cursor += durationInFrames;
 
-    const image = imageByName.get(scene.asset);
-
-    // Belt and braces. The schema already forbids a non-broll scene from
-    // carrying an imagePrompt, but this is the last point before pixels: a
-    // generated picture standing in for a product photograph is the failure
-    // this whole feature is designed around, so it is checked where the
-    // substitution would actually happen.
-    if (image?.generated && scene.type !== 'broll') {
+    const backdrop = backdrops.get(scene.id);
+    if (!backdrop) {
       throw new Error(
-        `Scene "${scene.id}" is a "${scene.type}" scene but resolved to the generated image ` +
-          `"${image.filename}". Only "broll" scenes may use generated imagery; everything else ` +
-          'must show one of the supplied photographs.',
+        `Scene "${scene.id}" has no photograph. Every scene is resolved before the timeline is ` +
+          `built, so this means the image stage and the storyboard disagree about scene ids.`,
       );
     }
-
-    if (!image) {
-      throw new Error(
-        `Scene "${scene.id}" references "${scene.asset}", which is not among the processed images: ` +
-          `${images.map((i) => i.filename).join(', ')}`,
-      );
-    }
+    const background = backdrop.image;
 
     const aligned = alignment?.scenes[index];
+
+    /*
+     * A scene with a span but no words means the audio arrived without
+     * timings - an external voice track, or a provider that reports none.
+     * Estimating them here rather than shrugging is the difference between
+     * approximate subtitles and no subtitles at all.
+     */
+    const sceneWords =
+      aligned && aligned.words.length === 0 && scene.narration.trim()
+        ? estimateWordTimings(scene.narration, aligned.startMs, aligned.endMs)
+        : (aligned?.words ?? []);
 
     return {
       id: scene.id,
       type: scene.type,
       from,
       durationInFrames,
-      headline: scene.headline,
-      image: {
-        src: input.imageSrcFor(image.filename),
-        width: image.width,
-        height: image.height,
-        fit: defaultFitFor(image.orientation),
+      title: scene.title,
+      background: {
+        src: input.imageSrcFor(background),
+        width: background.width,
+        height: background.height,
+        fit: defaultFitFor(background.aspectRatio, frameAspect, input.coverTolerance),
+        credit: backdrop.credit
+          ? {
+              label: creditLine(backdrop.credit),
+              creator: backdrop.credit.creator,
+              license: backdrop.credit.license,
+              licenseUrl: backdrop.credit.licenseUrl,
+              sourceUrl: backdrop.credit.sourceUrl,
+            }
+          : null,
       },
       // Rebased against where the scene actually starts on the timeline, not
       // against its first spoken word. Those differ - scene 1 begins at frame 0
       // while speech begins a little later - and using the word onset would
       // shift every caption early by that lead-in.
       captionPages: aligned
-        ? buildCaptionPages(aligned.words, (from / fps) * 1000, durationInFrames, fps)
+        ? input.buildCaptions({
+            words: sceneWords,
+            sceneStartMs: (from / fps) * 1000,
+            durationInFrames,
+            fps,
+            scene,
+          })
         : [],
       animation: scene.animation,
       transition: scene.transition,
+      effect: scene.effect,
+      overlay: scene.overlay,
     };
   });
 
@@ -157,6 +227,7 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineOutput {
       durationInFrames,
     },
     style: storyboard.video.style,
+    module: input.module,
     voice:
       input.voiceSrc && voiceDurationSec > 0
         ? {
@@ -175,7 +246,7 @@ export function buildTimeline(input: BuildTimelineInput): BuildTimelineOutput {
       usedFallbackAlignment: alignment?.usedFallback ?? true,
       clampedScenes,
       longScenes: timelineScenes
-        .filter((s) => s.durationInFrames > SCENE_DURATION_BOUNDS.maxSeconds * fps)
+        .filter((s) => s.durationInFrames > bounds.maxSeconds * fps)
         .map((s) => s.id),
       voiceOverhangSec: voiceDurationSec - durationInFrames / fps,
     },
@@ -205,9 +276,11 @@ function tileAcrossAudio(
   fps: number,
   scenes: readonly { id: string }[],
   clampedScenes: string[],
+  /** The module's floor on a scene, in seconds. */
+  minSeconds: number,
 ): number[] {
   const n = starts.length;
-  const minMs = SCENE_DURATION_BOUNDS.minSeconds * 1000;
+  const minMs = minSeconds * 1000;
 
   // Boundaries[0] is 0 rather than the first word's onset: the video has to
   // start at frame 0, and the brief lead-in before speech is useful headroom
@@ -257,70 +330,31 @@ function resolveAlignment(
 }
 
 /**
- * Groups a scene's words into 2-5 word pages with word-level tokens (spec §18),
- * rebased so 0ms is the scene's first frame.
+ * Groups a scene's words into subtitle lines, rebased so 0ms is the scene's
+ * first frame.
  *
- * Pages are clipped to the scene: a scene is padded and clamped after alignment,
- * so without this a page could reference a time the scene never reaches and the
- * caption would simply never appear.
+ * ## Short lines, broken where the voice breaks
+ *
+ * A page ends wherever the narrator stops: at a full stop, and at any real gap
+ * between two words. Both matter for different reasons. The sentence break
+ * keeps a line from carrying the tail of one thought and the head of the next,
+ * which is unreadable at this pace; the pause break is what makes the subtitle
+ * feel *timed to the voice* rather than merely synchronised with it - the line
+ * changes exactly where the speaker takes a breath.
+ *
+ * `MAX_WORDS_PER_PAGE` is the backstop for a clause the voice runs through
+ * without pausing. When it fires, the page is cut at the last comma rather than
+ * at the twelfth word, because the twelfth word is as likely as not to be the
+ * first half of something: "mà vi" / "khuẩn thì cần nước" is a subtitle that
+ * says nothing on either line. `SOFT_BREAK` is what that cut looks for, and it
+ * is why a page can come out shorter than the ceiling for no visible reason.
+ *
+ * The ceiling is low because the frame is nine by sixteen and the type is set
+ * large enough to read on a phone at arm's length. Twelve Vietnamese syllables
+ * is about two lines at that size; more than that and the block starts covering
+ * the photograph it is supposed to sit on.
+ *
+ * Pages are clipped to the scene: a scene is padded and clamped after
+ * alignment, so without this a page could reference a time the scene never
+ * reaches and the caption would simply never appear.
  */
-export function buildCaptionPages(
-  words: readonly WordTiming[],
-  sceneStartMs: number,
-  durationInFrames: number,
-  fps: number,
-): CaptionPage[] {
-  if (words.length === 0) return [];
-
-  const sceneDurationMs = (durationInFrames / fps) * 1000;
-  const MAX_WORDS_PER_PAGE = 5;
-  const MIN_WORDS_PER_PAGE = 2;
-  const MAX_GAP_MS = 480;
-
-  const pages: CaptionPage[] = [];
-  let current: WordTiming[] = [];
-
-  const flush = () => {
-    if (current.length === 0) return;
-
-    const tokens = current.map((w) => ({
-      text: w.text,
-      fromMs: clamp(w.fromMs - sceneStartMs, 0, sceneDurationMs),
-      toMs: clamp(w.toMs - sceneStartMs, 0, sceneDurationMs),
-    }));
-
-    const startMs = tokens[0]!.fromMs;
-    const endMs = tokens[tokens.length - 1]!.toMs;
-
-    // A page whose words were entirely clipped away carries no information.
-    if (endMs > startMs) {
-      pages.push({
-        text: current.map((w) => w.text).join(' '),
-        startMs,
-        // Hold the page until the next one starts rather than blinking out the
-        // instant the last word ends.
-        durationMs: Math.min(endMs - startMs + 260, sceneDurationMs - startMs),
-        tokens,
-      });
-    }
-    current = [];
-  };
-
-  for (const word of words) {
-    const previous = current[current.length - 1];
-    const gap = previous ? word.fromMs - previous.toMs : 0;
-
-    const full = current.length >= MAX_WORDS_PER_PAGE;
-    const naturalBreak = current.length >= MIN_WORDS_PER_PAGE && gap > MAX_GAP_MS;
-
-    if (full || naturalBreak) flush();
-    current.push(word);
-  }
-  flush();
-
-  return pages;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}

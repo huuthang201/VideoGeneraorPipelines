@@ -1,0 +1,152 @@
+@import 'tailwindcss';
+
+/*
+ * shadcn/ui tokens, Tailwind v4 style.
+ *
+ * Colours are declared once as CSS variables and mapped into Tailwind's theme
+ * below, which is what lets a component say `bg-card` rather than naming a
+ * hex - and what makes the dark palette a swap of the variables instead of a
+ * second set of classes on every element.
+ *
+ * The palette is shadcn's neutral default with one deliberate change: `primary`
+ * is the blue the previous interface used, so the tool still looks like itself.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(0.985 0.002 247);
+  --foreground: oklch(0.21 0.02 264);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.02 264);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.02 264);
+
+  --primary: oklch(0.55 0.21 261);
+  --primary-foreground: oklch(0.985 0 0);
+
+  --secondary: oklch(0.967 0.003 264);
+  --secondary-foreground: oklch(0.21 0.02 264);
+  --muted: oklch(0.967 0.003 264);
+  --muted-foreground: oklch(0.55 0.02 264);
+  --accent: oklch(0.967 0.003 264);
+  --accent-foreground: oklch(0.21 0.02 264);
+
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.6 0.15 150);
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.72 0.16 70);
+  --warning-foreground: oklch(0.21 0.02 264);
+
+  --border: oklch(0.928 0.006 264);
+  --input: oklch(0.928 0.006 264);
+  --ring: oklch(0.55 0.21 261);
+}
+
+.dark {
+  --background: oklch(0.16 0.01 264);
+  --foreground: oklch(0.97 0.002 247);
+  --card: oklch(0.21 0.015 264);
+  --card-foreground: oklch(0.97 0.002 247);
+  --popover: oklch(0.21 0.015 264);
+  --popover-foreground: oklch(0.97 0.002 247);
+
+  --primary: oklch(0.65 0.19 261);
+  --primary-foreground: oklch(0.16 0.01 264);
+
+  --secondary: oklch(0.27 0.015 264);
+  --secondary-foreground: oklch(0.97 0.002 247);
+  --muted: oklch(0.27 0.015 264);
+  --muted-foreground: oklch(0.7 0.015 264);
+  --accent: oklch(0.27 0.015 264);
+  --accent-foreground: oklch(0.97 0.002 247);
+
+  --destructive: oklch(0.65 0.2 25);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.68 0.15 152);
+  --success-foreground: oklch(0.16 0.01 264);
+  --warning: oklch(0.78 0.15 70);
+  --warning-foreground: oklch(0.16 0.01 264);
+
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.65 0.19 261);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+      sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+}
+
+/*
+ * The travelling dash on an arrow between two running steps.
+ *
+ * A moving line rather than a pulsing one: the point is direction - work is
+ * flowing from this step into the next - and a pulse says "busy" without saying
+ * which way.
+ */
+@keyframes flow-dash {
+  to {
+    background-position: 12px 0;
+  }
+}
+
+/*
+ * Applied to a plain element, not an SVG stroke.
+ *
+ * It animated `stroke-dashoffset` while the connectors were drawn arrows. The
+ * rail replaced them with a div, where that property does nothing at all - the
+ * line simply sat still and nobody would have noticed except by watching a run.
+ * A moving gradient is the div-shaped equivalent, and the element supplies its
+ * own colour through `--flow-colour` so the rail stays one class.
+ */
+.animate-flow-dash {
+  background-image: repeating-linear-gradient(
+    90deg,
+    currentColor 0 6px,
+    transparent 6px 12px
+  );
+  background-size: 12px 100%;
+  animation: flow-dash 0.6s linear infinite;
+}

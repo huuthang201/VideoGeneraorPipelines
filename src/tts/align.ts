@@ -10,9 +10,9 @@ import type { WordTiming } from './types';
  *
  * Matching is done on *character position*, not on token identity. Exact token
  * matching looks tidier but is brittle: the service expands numbers into words
- * ("399" -> "ba trăm chín chín"), drops punctuation, and occasionally merges
- * clitics, so a token-by-token walk desynchronises on the first surprise and
- * every later scene inherits the error. Character position degrades smoothly
+ * ("1969" -> "nineteen sixty-nine"), drops punctuation, and occasionally splits
+ * or joins hyphenated words, so a token-by-token walk desynchronises on the
+ * first surprise and every later scene inherits the error. Character position degrades smoothly
  * instead - an unexpected expansion shifts a boundary by a word or two rather
  * than corrupting everything downstream.
  */

@@ -1,19 +1,10 @@
 import { access } from 'node:fs/promises';
 import { jobPaths, type AppConfig } from '../../src/config/env';
+import { isValidSlug, slugify as sharedSlugify } from '../../src/utils/slug';
 
-/** Ascii kebab-case project id from a Vietnamese display name. */
+/** Project ids use the shared slug rules, so the CLI and the UI agree. */
 export function slugify(name: string): string {
-  const base = name
-    .trim()
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '') // combining diacritics left behind by NFD
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-
-  return base || 'du-an';
+  return sharedSlugify(name, 'du-an');
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -36,5 +27,5 @@ export async function uniqueProjectId(config: AppConfig, base: string): Promise<
 
 /** Same charset slugify() produces - used to reject unsafe ids in URLs. */
 export function isValidProjectId(id: string): boolean {
-  return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(id);
+  return isValidSlug(id);
 }
