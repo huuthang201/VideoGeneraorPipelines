@@ -1,10 +1,14 @@
 import type { Pacing } from '../../domain/config';
 
 /**
- * Fact-short pacing: the two numbers that decide how long a short comes out.
+ * Short-form pacing: the two numbers that decide how long a short comes out.
  *
- * Both are measured through the module's own voice and speed. They are not
- * comparable with the podcast module's - a "word" here is a Vietnamese
+ * Shared by every module built on this machinery, because what they measure is
+ * the *narrator*, not the subject matter - the voice, the speed and the
+ * punctuation the prompt produces. Two channels reading Vietnamese through
+ * Thanh Bình at 1.15 speak at the same rate whatever they are talking about.
+ *
+ * Not comparable with the podcast module's - a "word" here is a Vietnamese
  * syllable, so this WORDS_PER_MINUTE is roughly twice the English one and says
  * nothing about the narrator being faster.
  */
@@ -64,7 +68,21 @@ export const SCENE_DURATION_BOUNDS = {
 export const WORDS_PER_MINUTE = 318;
 
 
-export const FACT_PACING: Pacing = {
+/** Words the script needs to run its intended length. See WORDS_PER_MINUTE. */
+export function targetWordsFor(targetDurationSec: number): number {
+  return Math.round((targetDurationSec / 60) * WORDS_PER_MINUTE);
+}
+
+/**
+ * How long one scene holds, in seconds, before the picture wants to change.
+ *
+ * Five seconds. Long enough that the eye finishes with the photograph, short
+ * enough that the video never stops moving - and it lines up with the writing,
+ * because five seconds of this voice is about one full Vietnamese sentence.
+ */
+export const SECONDS_PER_SCENE = 5;
+
+export const SHORTS_PACING: Pacing = {
   sceneDuration: SCENE_DURATION_BOUNDS,
   wordsPerMinute: WORDS_PER_MINUTE,
 };

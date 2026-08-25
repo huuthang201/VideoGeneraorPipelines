@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { AspectSchema, FRAME_SIZES, StyleNameSchema, type ModuleId } from '../domain/config';
 import { PODCAST_ENV_DEFAULTS } from '../modules/podcast/env-defaults';
 import { FACT_ENV_DEFAULTS } from '../modules/fact/env-defaults';
+import { PSYCH_ENV_DEFAULTS } from '../modules/psych/env-defaults';
 import type { AssetKind } from '../domain/project';
 
 /**
@@ -63,6 +64,7 @@ function readEnvFile(file: string): Record<string, string> {
 const MODULE_DEFAULTS: Record<ModuleId, Record<string, string>> = {
   podcast: PODCAST_ENV_DEFAULTS,
   fact: FACT_ENV_DEFAULTS,
+  psych: PSYCH_ENV_DEFAULTS,
 };
 
 function layeredEnv(module: ModuleId): NodeJS.ProcessEnv {

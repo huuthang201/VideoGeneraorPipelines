@@ -75,6 +75,7 @@ const MIN_CHAPTERABLE_SECONDS = 120;
  */
 const BASE_HASHTAGS_BY_MODULE: Record<ModuleId, string[]> = {
   fact: ['shorts'],
+  psych: ['shorts'],
   podcast: [],
 };
 

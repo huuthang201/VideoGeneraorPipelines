@@ -12,7 +12,7 @@ export type StyleName = z.infer<typeof StyleNameSchema>;
  * survive the crossing into the browser: Remotion picks its theme pack by this
  * value, and the bundle has no access to node config or to .env.
  */
-export const MODULE_IDS = ['podcast', 'fact'] as const;
+export const MODULE_IDS = ['podcast', 'fact', 'psych'] as const;
 export const ModuleIdSchema = z.enum(MODULE_IDS);
 export type ModuleId = z.infer<typeof ModuleIdSchema>;
 

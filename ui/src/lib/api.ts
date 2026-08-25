@@ -1,17 +1,27 @@
 /**
  * Everything the screen knows about the server.
  *
- * Every path is scoped to a module, and there is no unscoped form - the two
+ * Every path is scoped to a module, and there is no unscoped form - the
  * pipelines are different collections of projects publishing to different
  * YouTube channels, so a request that forgot to say which one it meant should
  * fail rather than guess. The server agrees: `/api/projects` is a 404.
  */
 
-export type ModuleId = 'podcast' | 'fact';
+export type ModuleId = 'podcast' | 'fact' | 'psych';
 
 export const MODULE: ModuleId =
   (new URLSearchParams(location.search).get('m') as ModuleId | null) ?? 'fact';
 
+/**
+ * The one shape question the interface asks.
+ *
+ * Not `MODULE === 'fact'` anywhere, deliberately. What the screen actually
+ * branches on is whether pictures come from a library somebody uploaded or are
+ * searched for at render time - and that is true of the podcast and false of
+ * every vertical channel, present and future. Written the other way round,
+ * adding this third module would have meant hunting every `=== 'fact'` in the
+ * interface and hoping none was missed.
+ */
 export const isPodcast = () => MODULE === 'podcast';
 
 export const apiPath = (suffix: string) => `/api/${MODULE}${suffix}`;

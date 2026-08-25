@@ -1,28 +1,36 @@
 # Video Generator Pipelines
 
-Two video pipelines in one engine.
+Two pipelines and three channels in one engine.
 
-| | **Podcast** | **Fact Shorts** |
-|---|---|---|
-| Output | 5-10 minute MP4 | 30-60 second MP4 |
-| Frame | 1920x1080 | 1080x1920 |
-| Narration | English | Vietnamese |
-| Subtitles | bilingual English + Vietnamese | one Vietnamese line |
-| Voice | Edge TTS (`en-US-AriaNeural`) | VieNeu-TTS, local (`Thanh Bình`) |
-| Pictures | a shared library the user uploads | searched on Openverse at render time, then a second Claude call looks at the candidates and assigns them per scene |
-| Publishes to | its own YouTube channel, every 8h | its own YouTube channel, every 2h |
+| | **Podcast** | **Fact Shorts** | **Não Có Vấn Đề** |
+|---|---|---|---|
+| Output | 5-10 minute MP4 | 30-60 second MP4 | 30-60 second MP4 |
+| Frame | 1920x1080 | 1080x1920 | 1080x1920 |
+| Narration | English | Vietnamese | Vietnamese |
+| Subtitles | bilingual English + Vietnamese | one Vietnamese line | one Vietnamese line |
+| Voice | Edge TTS (`en-US-AriaNeural`) | VieNeu-TTS, local (`Thanh Bình`) | VieNeu-TTS, local (`Thanh Bình`) |
+| Pictures | a shared library the user uploads | searched on Openverse at render time, then a second Claude call looks at the candidates and assigns them per scene | as Fact Shorts |
+| Writes about | whatever the photographs support | one true thing | why your brain just did that |
+| Publishes to | its own YouTube channel, every 8h | its own YouTube channel, every 2h | its own YouTube channel, every 2h |
 
 ```bash
 npm run podcast -- generate <project>
 npm run fact    -- generate <project>
-npm run ui                              # both, on one page, port 4000
+npm run psych   -- generate <project>
+npm run ui                              # all three, on one page, port 4000
 npm run ui:build                        # rebuild the interface after editing ui/
 npm run ui:dev                          # Vite dev server with hot reload, port 5173
 ```
 
-There is no default module. That is deliberate: the two keep separate job
+There is no default module. That is deliberate: each keeps separate job
 directories, separate caches and **separate YouTube credentials**, so a guessed
 module would run the wrong pipeline and upload to the wrong channel.
+
+**Two pipelines, three channels.** `fact` and `psych` are the same pipeline -
+`src/modules/shorts` renders both, and neither owns a line of image search,
+pacing, caption or schema code. What each owns is its prompts, its env defaults
+and its accent colours. See "A channel is a prompt pack" below before adding a
+fourth.
 
 ## What this repo is
 
@@ -63,7 +71,13 @@ src/
     contract.ts     what a module must provide
     index.ts        the registry
     podcast/        prompts, library, captions, theme values, env defaults
-    fact/           prompts, Openverse, captions, theme values, env defaults
+    shorts/         everything `fact` and `psych` share: Openverse search and
+                    review, Vietnamese pacing, captions, scene/storyboard
+                    schemas, the module factory, and the machine-describing
+                    half of the prompt (`prompt-parts.ts`)
+    fact/           prompts + env defaults. Four files, and that is all a
+                    channel is
+    psych/          prompts + env defaults
 server/         one Express app serving both, routes scoped /api/<module>/…
 ui/             the web interface: React + Tailwind + shadcn, built by Vite
 runtime/<module>/   jobs, caches, logs, schedule, YouTube token (gitignored)
@@ -113,6 +127,49 @@ a brief redrew it as "not done" the moment it finished.
 Labels are not on the server. They are per module - the podcast picks a
 photograph out of a library, the fact short searches for one - and they are
 interface copy; they live in `ui/src/components/pipeline/PipelineFlow.tsx`.
+
+### A channel is a prompt pack
+
+Adding "Não Có Vấn Đề" is what forced this distinction, and it is worth reading
+before adding a fourth channel.
+
+`fact` and `psych` differ **only in prose**. Same frame, same voice, same pace,
+same Openverse search, same caption layout, same schema. By the rule above that
+makes them one module with a parameter - except for the one thing a module
+actually is here: its own `runtime/<id>/`, its own cache, and its own YouTube
+refresh token. Two channels cannot share a token, because the token *is* the
+channel.
+
+So the split is not module-versus-parameter, it is **machine versus channel**:
+
+| Lives in `shorts/` | Lives in `<channel>/` |
+|---|---|
+| Openverse search, ranking, download, the review pass | the storyboard prompt |
+| Vietnamese pacing and the word budget | the suggest-brief prompt |
+| captions, scene and storyboard schemas | env defaults (paths, channel name) |
+| `makeShortsModule`, the retry loop, the three gates | accent colours |
+| the half of the prompt describing *the system* | the half describing *the subject* |
+
+That last row is the one people get wrong. A prompt has editorial paragraphs
+("what counts as true on this channel") and mechanical ones ("Openverse indexes
+objects, not actions; adding a third word drops the result count off a cliff").
+The mechanical ones are measured behaviour of Openverse, VieNeu-TTS and
+`StoryboardDraftSchema`, they have no opinion about subject matter, and they
+live in `shorts/prompt-parts.ts`. Written out per channel, a lesson learned the
+expensive way - "rodent teeth" returns museum skulls - gets fixed in one prompt
+and stays wrong in the other.
+
+A new channel is therefore four files: two prompts, `env-defaults.ts`, and an
+`index.ts` that calls `makeShortsModule`. Plus its id in `MODULE_IDS`, which the
+compiler then chases into every `Record<ModuleId, …>` in the repo - the registry,
+the env defaults, the theme packs, the base hashtags. Follow the type errors and
+you cannot miss one.
+
+**Verify a channel refactor by diffing the prompt.** After moving the shared
+parts out, dump `buildStoryboardPrompt` for a fixed input from a worktree at the
+previous commit and from the working tree, and diff. The fact channel's prompt
+came out byte-identical, which is the only evidence that a 535-line prompt
+survived being cut into pieces.
 
 ### What each module owns, and why
 

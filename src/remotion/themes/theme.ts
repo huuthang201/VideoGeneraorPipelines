@@ -2,6 +2,7 @@ import type { ModuleId, StyleName } from '../../domain/config';
 import type { Theme } from './types';
 import { PODCAST_THEMES } from './podcast';
 import { FACT_THEMES } from './fact';
+import { PSYCH_THEMES } from './psych';
 
 export type { Theme } from './types';
 
@@ -15,6 +16,7 @@ export type { Theme } from './types';
 export const THEMES_BY_MODULE: Record<ModuleId, Record<StyleName, Theme>> = {
   podcast: PODCAST_THEMES,
   fact: FACT_THEMES,
+  psych: PSYCH_THEMES,
 };
 
 /**

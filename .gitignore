@@ -19,6 +19,7 @@ tmp/
 .env.local
 .env.podcast
 .env.fact
+.env.psych
 
 # runtime artifacts (jobs, cache, temp, logs)
 runtime/

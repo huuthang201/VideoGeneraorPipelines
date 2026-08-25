@@ -1,3 +1,5 @@
+import { suggestBrief } from './suggest-brief';
+import { registerPodcastCommands } from './cli';
 import type { VideoModule } from '../contract';
 import { PODCAST_PACING } from './pacing';
 import { BriefSchema, targetSecondsOf, type Brief } from './domain/brief';
@@ -107,6 +109,25 @@ export const podcastModule: VideoModule<Brief, Scene, Storyboard> = {
       logger,
     );
   },
+
+  /**
+   * Looks at the photographs before proposing a subject.
+   *
+   * The library *is* what an episode can be about, so reading it is the whole
+   * job - and the module does that reading itself. It used to be done by the
+   * CLI, which meant the CLI had to know that one of the two modules keeps a
+   * library of previews on disk.
+   */
+  suggestBrief: async (config, logger, input) => {
+    const paths = libraryPaths(config.libraryDir);
+    return suggestBrief(config, logger, {
+      previewDir: paths.preview,
+      assets: { environment: (await readLibrary(paths)).environment },
+      info: input.info,
+    });
+  },
+
+  registerCommands: registerPodcastCommands,
 
   resolveBackdrops,
   buildCaptions,

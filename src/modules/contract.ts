@@ -2,11 +2,12 @@ import type { CaptionPage } from '../domain/timeline';
 import type { ModuleId, Pacing, VideoConfig } from '../domain/config';
 import type { PublishMeta } from '../domain/storyboard';
 import type { ProductInfo } from '../domain/project';
-import type { BaseBrief } from '../domain/brief';
+import type { BaseBrief, SuggestedBrief } from '../domain/brief';
 import type { AppConfig } from '../config/env';
 import type { Logger } from '../utils/logger';
 import type { WordTiming } from '../tts/types';
 import type { SceneBackdrop } from '../pipeline/build-timeline';
+import type { Command } from 'commander';
 
 /**
  * What a module is, from the shared pipeline's point of view.
@@ -109,6 +110,21 @@ export interface ResolvedBackdrops {
 }
 
 /**
+ * What a module is given when asked to draft a brief.
+ *
+ * A superset: the podcast ignores `alreadyCovered` and a shorts channel
+ * ignores nothing, but one shape means the CLI and the server can ask without
+ * knowing which module is answering.
+ */
+export interface SuggestBriefInput {
+  /** The project's name - the only thing anyone types before asking. */
+  topic: string;
+  info: ProductInfo | null;
+  /** Titles this channel has already used. */
+  alreadyCovered: readonly string[];
+}
+
+/**
  * One pipeline.
  *
  * Generic over its own brief, scene and storyboard types so a module stays
@@ -189,6 +205,39 @@ export interface VideoModule<
    * discovering it once a whole episode has been spoken in the wrong accent.
    */
   assertVoiceUsable(voice: string, engine: string): void;
+
+  /**
+   * Draft a starting brief for a project nobody has written into.
+   *
+   * On the module because the two ask in genuinely different ways: the podcast
+   * *looks at* the shared library, since the photographs are what an episode
+   * can be about, while a shorts channel has nothing to look at yet and is
+   * given the project's name plus the titles it has already used, so the
+   * suggestion is on topic and not a repeat.
+   *
+   * It moved here from the CLI, where it was an `if (module.id === …)`. That
+   * shape costs nothing with two modules and one more arm with every module
+   * after - and forgetting an arm is a channel that silently suggests another
+   * channel's subject matter.
+   */
+  suggestBrief(
+    config: AppConfig,
+    logger: Logger,
+    input: SuggestBriefInput,
+  ): Promise<SuggestedBrief>;
+
+  /**
+   * Commands that exist only for this pipeline, if any.
+   *
+   * `stock-search` has no meaning for the podcast, whose photographs are
+   * uploaded rather than found; `library` has none for a channel that has no
+   * library. Registered by the module so a new one arrives with its own.
+   */
+  registerCommands?(
+    program: Command,
+    loadModuleConfig: () => AppConfig,
+    run: (fn: () => Promise<void>, logger: Logger) => Promise<void>,
+  ): void;
 
   /** Ask Claude for a storyboard. Only called when there is not one already. */
   generateStoryboard(
