@@ -70,6 +70,15 @@ export async function computeInputHash(input: {
   imagePaths: readonly string[];
   infoJson: string | null;
   storyboardJson: string | null;
+  /**
+   * Settings that change the finished video without changing any input file:
+   * voice, rate, pitch, style.
+   *
+   * Without these, retuning the delivery in .env and re-running reports
+   * "already up to date" and skips - the tool looks broken, and the only way
+   * out is a --force flag the user has no reason to suspect they need.
+   */
+  renderSettings: Record<string, string>;
   /** Bump when prompt or pipeline changes should invalidate prior output. */
   pipelineVersion: string;
 }): Promise<string> {
@@ -84,6 +93,11 @@ export async function computeInputHash(input: {
 
   hash.update(input.infoJson ?? '');
   hash.update(input.storyboardJson ?? '');
+
+  // Sorted so the hash does not depend on key order.
+  for (const key of Object.keys(input.renderSettings).sort()) {
+    hash.update(`${key}=${input.renderSettings[key]}`);
+  }
 
   return `sha256:${hash.digest('hex')}`;
 }

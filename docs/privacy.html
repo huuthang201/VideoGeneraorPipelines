@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chính sách quyền riêng tư — Ủa thật à</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 42rem;
+    margin: 0 auto;
+    padding: 3rem 1.25rem 5rem;
+  }
+  h1 { font-size: 1.6rem; line-height: 1.25; margin-bottom: 0.25rem; }
+  .sub { opacity: 0.7; margin-top: 0; }
+  h2 { font-size: 1.1rem; margin-top: 2.25rem; }
+  ul { padding-left: 1.2rem; }
+  li { margin: 0.35rem 0; }
+  footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid rgba(128,128,128,0.3); opacity: 0.75; font-size: 0.9rem; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+
+<h1>Chính sách quyền riêng tư</h1>
+<p class="sub">Áp dụng cho công cụ dựng video “Ủa thật à”. Cập nhật: 24/08/2026.</p>
+
+<h2>Tóm tắt</h2>
+<p>
+  Công cụ này chạy hoàn toàn trên máy tính cá nhân của người dùng. Nó không có
+  máy chủ, không thu thập dữ liệu của bất kỳ ai, và không gửi thông tin của
+  người dùng cho bên thứ ba nào.
+</p>
+
+<h2>Dữ liệu được truy cập</h2>
+<p>Khi người dùng tự cấp quyền, công cụ dùng YouTube Data API để:</p>
+<ul>
+  <li>tải video lên kênh YouTube của chính người dùng;</li>
+  <li>đọc tên và mã kênh đang được cấp quyền, nhằm hiển thị lại cho người dùng
+      xác nhận đúng kênh trước khi đăng;</li>
+  <li>đặt ảnh bìa cho video vừa tải lên.</li>
+</ul>
+<p>
+  Công cụ không đọc nội dung, số liệu thống kê, bình luận hay danh sách người
+  đăng ký của kênh, và không sửa hay xoá video có sẵn.
+</p>
+
+<h2>Dữ liệu được lưu, và lưu ở đâu</h2>
+<ul>
+  <li><strong>Refresh token của Google</strong> — lưu trong một tệp trên chính
+      máy của người dùng (<code>runtime/youtube-token.json</code>). Nó không
+      được gửi đi đâu ngoài Google, và chỉ dùng để lấy access token cho lần tải
+      lên tiếp theo.</li>
+  <li><strong>Tên và địa chỉ kênh</strong> — lưu cạnh token, chỉ để hiển thị.</li>
+  <li><strong>Kịch bản, ảnh, video đã dựng</strong> — nằm trong thư mục của
+      người dùng, không được tải lên đâu ngoài chính kênh YouTube của họ.</li>
+</ul>
+
+<h2>Chia sẻ dữ liệu</h2>
+<p>
+  Không có. Công cụ chỉ liên hệ với Google (để cấp quyền và tải video lên) và
+  với các kho ảnh giấy phép mở (để tải ảnh nền về). Không có bên thứ ba nào
+  khác, không có dịch vụ phân tích, không có quảng cáo.
+</p>
+
+<h2>Thu hồi quyền</h2>
+<p>
+  Người dùng có thể thu hồi quyền bất cứ lúc nào tại
+  <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>,
+  và xoá tệp <code>runtime/youtube-token.json</code> trên máy. Sau đó công cụ
+  không còn truy cập được gì cho tới khi được cấp quyền lại.
+</p>
+<p>
+  Việc sử dụng dữ liệu từ YouTube API tuân theo
+  <a href="https://policies.google.com/privacy">Chính sách quyền riêng tư của Google</a>.
+</p>
+
+<h2>Liên hệ</h2>
+<p>
+  Mọi câu hỏi xin gửi tới địa chỉ email đã khai trong phần Developer contact
+  information của ứng dụng trên Google Cloud Console.
+</p>
+
+<footer>
+  <a href="./index.html">Về trang chủ</a>
+</footer>
+
+</body>
+</html>

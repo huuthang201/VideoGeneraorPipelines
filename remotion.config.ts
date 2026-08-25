@@ -14,3 +14,18 @@ Config.setPixelFormat('yuv420p');
 Config.setCrf(18);
 
 Config.setOverwriteOutput(true);
+
+/**
+ * The same font embedding the programmatic bundler applies (see
+ * src/video/bundler.ts and src/remotion/fonts.ts). Mirrored here so Studio and
+ * `remotion render` load the face exactly the way a production render does -
+ * otherwise the one path people preview in is the one path not exercising the
+ * fix.
+ */
+Config.overrideWebpackConfig((config) => ({
+  ...config,
+  module: {
+    ...config.module,
+    rules: [...(config.module?.rules ?? []), { test: /\.ttf$/, type: 'asset/inline' }],
+  },
+}));

@@ -1,8 +1,7 @@
 import type { ImageFit } from '../../domain/scene';
-import type { Orientation } from '../../domain/project';
 
 /**
- * Image fitting for a 9:16 frame (spec §22-23).
+ * Image fitting.
  *
  * The single rule that matters: never stretch. The classic way this goes wrong
  * is setting both width:100% and height:100% on an <img> and letting the
@@ -35,15 +34,44 @@ export interface FitResult {
 }
 
 /**
- * Which treatment suits a given source shape (spec §23).
+ * Which treatment suits a given source in a given frame.
  *
- * Portrait already matches the frame closely enough that cover crops very
- * little, so it gets the full-bleed treatment. Landscape and square would lose
- * too much of the product to a 9:16 crop, so they are contained over a blurred
- * copy of themselves instead.
+ * Decided by comparing the two aspect ratios rather than by naming shapes,
+ * because the frame is not always vertical: a landscape photograph is
+ * full-bleed in a 16:9 render and would be letterboxed in a 9:16 one, and a
+ * rule written in terms of "portrait" or "landscape" gets that exactly
+ * backwards half the time.
+ *
+ * ## Why the tolerance is a parameter
+ *
+ * How far a source may be from the frame's shape and still be cropped to fill
+ * it, rather than contained over a blurred copy of itself. The two modules
+ * answer this very differently, and both answers are right for what they show.
+ *
+ * The **fact module uses 4.0**, which is extremely generous: a 16:9 source
+ * fills a 9:16 frame and a 9:16 source fills a 16:9 one, both by cropping
+ * heavily, which costs a backdrop nothing. It was 1.35 there and sent an
+ * ordinary 16:9 photograph in a vertical frame (ratio 3.16) to the blurred
+ * treatment - a short with the photograph reduced to a band across the middle
+ * and blurred grey above and below it, which is what a reposted video looks
+ * like. Since stock results are mostly landscape, that was every scene of every
+ * video.
+ *
+ * The **podcast module keeps 1.35**, and deliberately. Its frame and its
+ * library are both landscape, so the tolerance is rarely exercised at all; when
+ * it is, the image is an odd one out, and the interface promises the user that
+ * an off-ratio photograph is blurred at the sides rather than cropped into. A
+ * ten-minute episode also holds each picture long enough for a hard crop to be
+ * studied, which a four-second cut does not.
  */
-export function defaultFitFor(orientation: Orientation): ImageFit {
-  return orientation === 'portrait' ? 'cover' : 'blur-pad';
+export function defaultFitFor(
+  imageAspect: number,
+  frameAspect: number,
+  coverTolerance: number,
+): ImageFit {
+  if (!Number.isFinite(imageAspect) || imageAspect <= 0) return 'blur-pad';
+  const ratio = imageAspect / frameAspect;
+  return ratio >= 1 / coverTolerance && ratio <= coverTolerance ? 'cover' : 'blur-pad';
 }
 
 export function coverScale(
@@ -137,14 +165,4 @@ export function computeFit(
   };
 }
 
-/** True when the box covers the whole frame - i.e. no bars will show. */
-export function coversFrame(box: FitBox, frameWidth: number, frameHeight: number): boolean {
-  // Tolerate sub-pixel rounding; a 0.5px gap is not a visible bar.
-  const epsilon = 1;
-  return box.width >= frameWidth - epsilon && box.height >= frameHeight - epsilon;
-}
 
-/** The source aspect ratio, for asserting in tests that nothing got squashed. */
-export function boxAspectRatio(box: FitBox): number {
-  return box.width / box.height;
-}

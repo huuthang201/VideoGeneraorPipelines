@@ -1,13 +1,10 @@
-import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
 import type { CSSProperties, ReactNode } from 'react';
-import type { AnimationName } from '../../domain/scene';
-import { getContentEntry } from '../animations/presets';
 import type { Theme } from '../themes/theme';
 import { FONT_STACK } from '../fonts';
 
 export interface AnimatedTextProps {
   children: ReactNode;
-  animation: AnimationName;
   theme: Theme;
   /** Frames to wait before the entry begins - used to stagger stacked lines. */
   delayFrames?: number;
@@ -15,81 +12,86 @@ export interface AnimatedTextProps {
 }
 
 /**
- * Headline text with a themed entry animation.
+ * A scene's on-screen title.
  *
- * The entry style comes from `getContentEntry`, which deliberately collapses
- * camera moves down to a plain fade: when the image is already panning, sliding
- * the text as well makes the frame feel busy rather than dynamic.
+ * Set larger than the subtitle and with an accent rule beside it. Both exist
+ * for the same reason: the subtitle is now bold too, so a title that differs
+ * from it only in weight does not read as a title - it reads as a caption that
+ * happens to be bigger. The rule also gives the block a left edge to sit
+ * against, which is what stops bottom-left text from looking dropped rather
+ * than placed.
+ *
+ * One entry, everywhere: a short fade with a few pixels of upward travel, over
+ * about a third of a second. Springs, slides and pops are not in the
+ * vocabulary at all - not because they would be too loud for the format, but
+ * because they would fight the camera move underneath and the subtitle beside
+ * them, and a title in this frame is the third most important thing in it.
+ *
+ * The travel is a fraction of the type size rather than a pixel count, so it
+ * stays proportionate in either frame shape.
  */
 export const AnimatedText: React.FC<AnimatedTextProps> = ({
   children,
-  animation,
   theme,
   delayFrames = 0,
   style,
 }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const entry = getContentEntry(animation);
+  const { width, height } = useVideoConfig();
   const local = frame - delayFrames;
 
+  const fontSize = Math.min(width, height) * theme.title.sizeRatio;
   const duration = theme.motion.entryDurationFrames;
-  const linear = interpolate(local, [0, duration], [0, 1], {
+
+  const progress = interpolate(local, [0, duration], [0, 1], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
 
-  const springValue = spring({
-    frame: local,
-    fps,
-    config: { damping: theme.motion.springDamping, stiffness: theme.motion.springStiffness },
-  });
-
-  const { opacity, transform } = entryStyle(entry, linear, springValue);
+  const rule = style?.textAlign === 'center' ? null : (
+    <div
+      style={{
+        width: Math.max(2, fontSize * 0.055),
+        alignSelf: 'stretch',
+        borderRadius: fontSize,
+        backgroundColor: theme.colors.accent,
+        // Grows into place with the text rather than being there first.
+        transform: `scaleY(${progress})`,
+        transformOrigin: 'bottom',
+        flexShrink: 0,
+      }}
+    />
+  );
 
   return (
     <div
       style={{
-        opacity,
-        transform,
-        fontFamily: FONT_STACK,
-        color: theme.colors.text,
-        fontSize: theme.headline.fontSize,
-        fontWeight: theme.headline.fontWeight,
-        lineHeight: theme.headline.lineHeight,
-        letterSpacing: theme.headline.letterSpacing,
-        textTransform: theme.headline.uppercase ? 'uppercase' : 'none',
-        maxWidth: `${theme.headline.maxWidthRatio * 100}%`,
-        // Product photos are unpredictable; a soft shadow keeps white type
-        // readable over a light background without needing a full scrim.
-        textShadow: '0 4px 24px rgba(0,0,0,0.55)',
-        ...style,
+        display: 'flex',
+        alignItems: 'stretch',
+        gap: fontSize * 0.42,
+        opacity: progress,
+        transform: `translateY(${(1 - progress) * fontSize * 0.35}px)`,
+        maxWidth: `${theme.title.maxWidthRatio * 100}%`,
       }}
     >
-      {children}
+      {rule}
+      <div
+        style={{
+          fontFamily: FONT_STACK,
+          color: theme.colors.text,
+          fontSize,
+          fontWeight: theme.title.fontWeight,
+          lineHeight: theme.title.lineHeight,
+          letterSpacing: `${theme.title.letterSpacingEm}em`,
+          textTransform: theme.title.uppercase ? 'uppercase' : 'none',
+          // Photographs are unpredictable; a soft shadow keeps light type
+          // readable over a light sky without needing a heavier scrim.
+          textShadow: '0 4px 28px rgba(0,0,0,0.55)',
+          ...style,
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 };
-
-function entryStyle(
-  entry: ReturnType<typeof getContentEntry>,
-  linear: number,
-  springValue: number,
-): { opacity: number; transform: string } {
-  const travel = 64;
-
-  switch (entry) {
-    case 'none':
-      return { opacity: 1, transform: 'none' };
-    case 'fade':
-      return { opacity: linear, transform: 'none' };
-    case 'spring':
-      return { opacity: linear, transform: `scale(${0.86 + springValue * 0.14})` };
-    case 'slide-left':
-      return { opacity: linear, transform: `translateX(${(1 - springValue) * travel}px)` };
-    case 'slide-right':
-      return { opacity: linear, transform: `translateX(${(1 - springValue) * -travel}px)` };
-    case 'slide-up':
-      return { opacity: linear, transform: `translateY(${(1 - springValue) * travel}px)` };
-  }
-}

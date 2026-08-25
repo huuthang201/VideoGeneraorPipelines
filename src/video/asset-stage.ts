@@ -29,6 +29,14 @@ export interface StageAssetsInput {
   projectId: string;
   /** Absolute source directories to copy in, keyed by their name in the bundle. */
   directories: Record<string, string>;
+  /**
+   * Individual files, keyed by their path inside the staged directory.
+   *
+   * Music is why this exists: the library it comes from may hold a dozen
+   * tracks, and copying all of them into every render to use one is several
+   * megabytes of pointless I/O per episode.
+   */
+  files?: Record<string, string>;
 }
 
 export async function stageAssets(input: StageAssetsInput): Promise<StagedAssets> {
@@ -42,6 +50,12 @@ export async function stageAssets(input: StageAssetsInput): Promise<StagedAssets
 
   for (const [name, sourceDir] of Object.entries(input.directories)) {
     await cp(sourceDir, path.join(stagedDir, name), { recursive: true });
+  }
+
+  for (const [name, sourceFile] of Object.entries(input.files ?? {})) {
+    const target = path.join(stagedDir, name);
+    await mkdir(path.dirname(target), { recursive: true });
+    await cp(sourceFile, target);
   }
 
   return {

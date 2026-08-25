@@ -5,7 +5,7 @@ import type { Timeline } from '../domain/timeline';
 import { ERROR_CODES, PipelineError } from '../domain/errors';
 
 /**
- * Programmatic rendering (spec §37 pipeline step).
+ * Programmatic rendering.
  *
  * The API is used rather than the CLI so failures arrive as catchable errors
  * with context, instead of an exit code and a wall of stdout to parse.
@@ -13,15 +13,37 @@ import { ERROR_CODES, PipelineError } from '../domain/errors';
 
 export const COMPOSITION_ID = 'ShortVideo';
 
+/**
+ * How long a `delayRender()` handle may stay open before the render fails.
+ *
+ * Remotion's default is 30 seconds, which sounds generous until a busy machine
+ * meets a cold Chromium: loading the three bundled font faces on the first
+ * frame of a fresh bundle has taken longer than that here, failing an entire
+ * render attempt for a page that was merely slow to start.
+ *
+ * Two minutes was not enough either. A twelve-thousand-frame episode opens
+ * pages over several minutes rather than all at once, and one that happened to
+ * start while the machine was busy blew the font handle at 118s - throwing away
+ * a job that had already paid for a Claude call and seven minutes of speech.
+ * Five minutes costs nothing when things are healthy (the handle clears in
+ * milliseconds) and it is still bounded, so a genuinely broken page fails
+ * rather than hanging the queue.
+ */
+const DELAY_RENDER_TIMEOUT_MS = 300_000;
+
 export interface RenderInput {
   bundleLocation: string;
   timeline: Timeline;
   outputPath: string;
   onProgress?: (progress: { renderedFrames: number; totalFrames: number }) => void;
   /**
-   * Parallel Chrome instances. Left conservative by default: each one holds a
-   * full 1080x1920 page, and this machine is short on disk for their scratch
-   * space.
+   * Parallel Chrome instances.
+   *
+   * Left to Remotion by default, which picks from the core count. This was
+   * pinned at 2 when an episode was 25 seconds long and the difference did not
+   * matter; at twelve thousand frames it is minutes of wall clock, and the
+   * scratch-space worry that motivated the pin was about a machine that has
+   * since been replaced. Set it explicitly to bound memory on a small host.
    */
   concurrency?: number;
 }
@@ -42,6 +64,7 @@ export async function renderVideo(input: RenderInput): Promise<RenderOutput> {
     serveUrl: input.bundleLocation,
     id: COMPOSITION_ID,
     inputProps,
+    timeoutInMilliseconds: DELAY_RENDER_TIMEOUT_MS,
   }).catch((err) => {
     throw new PipelineError(
       ERROR_CODES.RENDER_FAILED,
@@ -64,7 +87,8 @@ export async function renderVideo(input: RenderInput): Promise<RenderOutput> {
       crf: 18,
       outputLocation: input.outputPath,
       inputProps,
-      concurrency: input.concurrency ?? 2,
+      ...(input.concurrency ? { concurrency: input.concurrency } : {}),
+      timeoutInMilliseconds: DELAY_RENDER_TIMEOUT_MS,
       onProgress: ({ renderedFrames }) =>
         input.onProgress?.({ renderedFrames, totalFrames: composition.durationInFrames }),
     });
@@ -86,7 +110,7 @@ export async function renderVideo(input: RenderInput): Promise<RenderOutput> {
 }
 
 /**
- * Thumbnail (spec §40).
+ * Thumbnail.
  *
  * Rendered as a still from the composition rather than extracted from the
  * encoded video: the frame comes out at full quality with no inter-frame
@@ -104,6 +128,7 @@ export async function renderThumbnail(input: {
     serveUrl: input.bundleLocation,
     id: COMPOSITION_ID,
     inputProps,
+    timeoutInMilliseconds: DELAY_RENDER_TIMEOUT_MS,
   });
 
   // Default to halfway through the hook: past its entry animation, before the
@@ -122,6 +147,7 @@ export async function renderThumbnail(input: {
     frame: Math.max(0, frame),
     imageFormat: 'jpeg',
     jpegQuality: 90,
+    timeoutInMilliseconds: DELAY_RENDER_TIMEOUT_MS,
   });
 
   return input.outputPath;

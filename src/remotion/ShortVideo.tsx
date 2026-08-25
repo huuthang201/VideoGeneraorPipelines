@@ -20,7 +20,7 @@ import './fonts';
  */
 export const ShortVideo: React.FC<{ timeline: Timeline }> = ({ timeline }) => {
   const { fps } = useVideoConfig();
-  const theme = getTheme(timeline.style);
+  const theme = getTheme(timeline.style, timeline.module);
 
   const speechIntervals = useMemo(() => buildSpeechIntervals(timeline), [timeline]);
 

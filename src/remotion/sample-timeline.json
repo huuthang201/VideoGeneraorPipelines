@@ -1,0 +1,387 @@
+{
+  "version": "1.0",
+  "projectId": "fixture-sample",
+  "video": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "durationInFrames": 802
+  },
+  "style": "warm",
+  "module": "fact",
+  "voice": null,
+  "music": null,
+  "scenes": [
+    {
+      "id": "scene-01",
+      "type": "intro",
+      "from": 0,
+      "durationInFrames": 282,
+      "title": "Mật ong không hỏng",
+      "background": {
+        "src": "test-images/portrait.jpg",
+        "width": 1200,
+        "height": 1600,
+        "fit": "cover"
+      },
+      "captionPages": [
+        {
+          "text": "Mật ong để ba nghìn năm vẫn ăn được.",
+          "startMs": 400,
+          "durationMs": 4130,
+          "tokens": [
+            {
+              "text": "Mật",
+              "fromMs": 400,
+              "toMs": 770
+            },
+            {
+              "text": "ong",
+              "fromMs": 830,
+              "toMs": 1200
+            },
+            {
+              "text": "để",
+              "fromMs": 1260,
+              "toMs": 1630
+            },
+            {
+              "text": "ba",
+              "fromMs": 1690,
+              "toMs": 2060
+            },
+            {
+              "text": "nghìn",
+              "fromMs": 2120,
+              "toMs": 2490
+            },
+            {
+              "text": "năm",
+              "fromMs": 2550,
+              "toMs": 2920
+            },
+            {
+              "text": "vẫn",
+              "fromMs": 2980,
+              "toMs": 3350
+            },
+            {
+              "text": "ăn",
+              "fromMs": 3410,
+              "toMs": 3780
+            },
+            {
+              "text": "được.",
+              "fromMs": 3840,
+              "toMs": 4210
+            }
+          ]
+        },
+        {
+          "text": "Người ta tìm thấy nó trong lăng mộ Ai Cập.",
+          "startMs": 4490,
+          "durationMs": 4560,
+          "tokens": [
+            {
+              "text": "Người",
+              "fromMs": 4490,
+              "toMs": 4860
+            },
+            {
+              "text": "ta",
+              "fromMs": 4920,
+              "toMs": 5290
+            },
+            {
+              "text": "tìm",
+              "fromMs": 5350,
+              "toMs": 5720
+            },
+            {
+              "text": "thấy",
+              "fromMs": 5780,
+              "toMs": 6150
+            },
+            {
+              "text": "nó",
+              "fromMs": 6210,
+              "toMs": 6580
+            },
+            {
+              "text": "trong",
+              "fromMs": 6640,
+              "toMs": 7010
+            },
+            {
+              "text": "lăng",
+              "fromMs": 7070,
+              "toMs": 7440
+            },
+            {
+              "text": "mộ",
+              "fromMs": 7500,
+              "toMs": 7870
+            },
+            {
+              "text": "Ai",
+              "fromMs": 7930,
+              "toMs": 8300
+            },
+            {
+              "text": "Cập.",
+              "fromMs": 8360,
+              "toMs": 8730
+            }
+          ]
+        }
+      ],
+      "animation": "zoom-in",
+      "transition": "fade",
+      "effect": "none",
+      "overlay": "dust"
+    },
+    {
+      "id": "scene-02",
+      "type": "segment",
+      "from": 282,
+      "durationInFrames": 315,
+      "title": "",
+      "background": {
+        "src": "test-images/landscape.jpg",
+        "width": 1600,
+        "height": 1200,
+        "fit": "cover"
+      },
+      "captionPages": [
+        {
+          "text": "Lý do nằm ở nước.",
+          "startMs": 400,
+          "durationMs": 2410,
+          "tokens": [
+            {
+              "text": "Lý",
+              "fromMs": 400,
+              "toMs": 770
+            },
+            {
+              "text": "do",
+              "fromMs": 830,
+              "toMs": 1200
+            },
+            {
+              "text": "nằm",
+              "fromMs": 1260,
+              "toMs": 1630
+            },
+            {
+              "text": "ở",
+              "fromMs": 1690,
+              "toMs": 2060
+            },
+            {
+              "text": "nước.",
+              "fromMs": 2120,
+              "toMs": 2490
+            }
+          ]
+        },
+        {
+          "text": "Mật ong gần như không có nước,",
+          "startMs": 2770,
+          "durationMs": 3270,
+          "tokens": [
+            {
+              "text": "Mật",
+              "fromMs": 2770,
+              "toMs": 3140
+            },
+            {
+              "text": "ong",
+              "fromMs": 3200,
+              "toMs": 3570
+            },
+            {
+              "text": "gần",
+              "fromMs": 3630,
+              "toMs": 4000
+            },
+            {
+              "text": "như",
+              "fromMs": 4060,
+              "toMs": 4430
+            },
+            {
+              "text": "không",
+              "fromMs": 4490,
+              "toMs": 4860
+            },
+            {
+              "text": "có",
+              "fromMs": 4920,
+              "toMs": 5290
+            },
+            {
+              "text": "nước,",
+              "fromMs": 5350,
+              "toMs": 5720
+            }
+          ]
+        },
+        {
+          "text": "mà vi khuẩn thì cần nước mới sống được.",
+          "startMs": 6000,
+          "durationMs": 4130,
+          "tokens": [
+            {
+              "text": "mà",
+              "fromMs": 6000,
+              "toMs": 6370
+            },
+            {
+              "text": "vi",
+              "fromMs": 6430,
+              "toMs": 6800
+            },
+            {
+              "text": "khuẩn",
+              "fromMs": 6860,
+              "toMs": 7230
+            },
+            {
+              "text": "thì",
+              "fromMs": 7290,
+              "toMs": 7660
+            },
+            {
+              "text": "cần",
+              "fromMs": 7720,
+              "toMs": 8090
+            },
+            {
+              "text": "nước",
+              "fromMs": 8150,
+              "toMs": 8520
+            },
+            {
+              "text": "mới",
+              "fromMs": 8580,
+              "toMs": 8950
+            },
+            {
+              "text": "sống",
+              "fromMs": 9010,
+              "toMs": 9380
+            },
+            {
+              "text": "được.",
+              "fromMs": 9440,
+              "toMs": 9810
+            }
+          ]
+        }
+      ],
+      "animation": "pan-right",
+      "transition": "cut",
+      "effect": "none",
+      "overlay": "none"
+    },
+    {
+      "id": "scene-03",
+      "type": "outro",
+      "from": 597,
+      "durationInFrames": 205,
+      "title": "",
+      "background": {
+        "src": "test-images/square.jpg",
+        "width": 1400,
+        "height": 1400,
+        "fit": "cover"
+      },
+      "captionPages": [
+        {
+          "text": "Hũ mật trong bếp nhà bạn",
+          "startMs": 400,
+          "durationMs": 2840,
+          "tokens": [
+            {
+              "text": "Hũ",
+              "fromMs": 400,
+              "toMs": 770
+            },
+            {
+              "text": "mật",
+              "fromMs": 830,
+              "toMs": 1200
+            },
+            {
+              "text": "trong",
+              "fromMs": 1260,
+              "toMs": 1630
+            },
+            {
+              "text": "bếp",
+              "fromMs": 1690,
+              "toMs": 2060
+            },
+            {
+              "text": "nhà",
+              "fromMs": 2120,
+              "toMs": 2490
+            },
+            {
+              "text": "bạn",
+              "fromMs": 2550,
+              "toMs": 2920
+            }
+          ]
+        },
+        {
+          "text": "có thể sống lâu hơn cả bạn.",
+          "startMs": 3200,
+          "durationMs": 3270,
+          "tokens": [
+            {
+              "text": "có",
+              "fromMs": 3200,
+              "toMs": 3570
+            },
+            {
+              "text": "thể",
+              "fromMs": 3630,
+              "toMs": 4000
+            },
+            {
+              "text": "sống",
+              "fromMs": 4060,
+              "toMs": 4430
+            },
+            {
+              "text": "lâu",
+              "fromMs": 4490,
+              "toMs": 4860
+            },
+            {
+              "text": "hơn",
+              "fromMs": 4920,
+              "toMs": 5290
+            },
+            {
+              "text": "cả",
+              "fromMs": 5350,
+              "toMs": 5720
+            },
+            {
+              "text": "bạn.",
+              "fromMs": 5780,
+              "toMs": 6150
+            }
+          ]
+        }
+      ],
+      "animation": "drift",
+      "transition": "fade",
+      "effect": "none",
+      "overlay": "light-sweep"
+    }
+  ]
+}

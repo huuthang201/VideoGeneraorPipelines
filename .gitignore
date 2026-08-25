@@ -1,10 +1,24 @@
+# The two pre-merge clones, kept on disk for reference.
+# Nine gigabytes of duplicated source, node_modules and rendered video - and
+# every file in them is an older copy of something that now lives in src/.
+FactGeneratorPipelines/
+PodcastGeneratorPipelines/
+
 # deps
 node_modules/
 .venv/
+.venv-vieneu/
 
-# secrets & local config
+# scratch output
+tmp/
+
+# secrets & local config.
+# One shared file plus one per module - each module carries its own YouTube
+# OAuth client, so all three are credentials. The .example files are tracked.
 .env
 .env.local
+.env.podcast
+.env.fact
 
 # runtime artifacts (jobs, cache, temp, logs)
 runtime/
@@ -12,8 +26,18 @@ runtime/
 # render output
 out/
 
+# the Drive working area: user photos in, generated videos out.
+# Nothing here is source, and the videos are tens of megabytes each.
+workspace/
+
+# the web UI's build output. Source is in ui/; `npm run ui:build` writes here.
+server/public/
+
 # per-job assets staged into the Remotion bundle at render time
 public/jobs/
+
+# regenerate with: node scripts/make-test-images.mjs
+public/test-images/
 
 # media assets added manually (licensing varies) - keep dirs via .gitkeep
 assets/music/*
@@ -23,3 +47,7 @@ assets/sfx/*
 # os / editor
 .DS_Store
 *.log
+
+# python bytecode caches
+__pycache__/
+*.pyc

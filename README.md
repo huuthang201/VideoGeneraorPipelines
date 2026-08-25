@@ -1,104 +1,121 @@
-# Auto Short Video Generator
+# Video Generator Pipelines
 
-Drop a folder of product photos in, get a 1080x1920 MP4 with Vietnamese
-narration and synced captions out.
+Hai dây chuyền làm video trong cùng một engine.
 
-```
-01_INPUT/baseus-ma10/{01.jpg,02.jpg,03.jpg,info.json}
-        ↓
-03_OUTPUT/baseus-ma10/{video.mp4,thumbnail.jpg,storyboard.json,script.txt,captions.srt,job.json}
-```
+| | **Podcast** | **Fact Shorts** |
+|---|---|---|
+| Kết quả | MP4 dài 5-10 phút | MP4 dài 30-60 giây |
+| Khung hình | 1920x1080 (ngang) | 1080x1920 (dọc) |
+| Lời đọc | tiếng Anh | tiếng Việt |
+| Phụ đề | song ngữ Anh + Việt | một dòng tiếng Việt |
+| Giọng | Edge TTS (`en-US-AriaNeural`) | VieNeu-TTS chạy máy (`Thanh Bình`) |
+| Ảnh nền | thư viện chung do bạn tải lên | tự tìm trên Openverse khi dựng |
+| Đăng lên | kênh YouTube riêng, mỗi 8 giờ | kênh YouTube riêng, mỗi 2 giờ |
 
-## Setup
+Hai module dùng chung khoảng hai phần ba code, nhưng **không dùng chung dữ liệu
+và không dùng chung tài khoản YouTube**: mỗi bên có thư mục `runtime/` riêng,
+file `.env` riêng và OAuth client riêng.
+
+## Cài đặt
 
 ```bash
-nvm use            # Node 22 (see .nvmrc)
+nvm use                 # Node 22 (bắt buộc: sharp và Remotion)
 npm install
-npm run setup:python
+npm run setup:python    # venv + edge-tts (podcast, và fallback cho fact)
+npm run setup:vieneu    # venv + VieNeu-TTS (fact)
+```
+
+Rồi tạo cấu hình:
+
+```bash
 cp .env.example .env
+cp .env.podcast.example .env.podcast
+cp .env.fact.example .env.fact
 ```
 
-`npm run setup:python` creates a project-local `.venv` with `edge-tts`. It is
-kept out of the system interpreter deliberately; nothing else is installed
-globally.
+`.env` giữ những gì hai bên dùng chung; `.env.<module>` giữ phần riêng và **ghi
+đè** lên `.env`. Điền `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` riêng cho
+từng module — đó là hai kênh khác nhau.
 
-## Usage
+## Chạy
 
 ```bash
-npx tsx src/cli/index.ts prepare workspace/AI-Shorts/01_INPUT/baseus-ma10
-npx tsx src/cli/index.ts generate baseus-ma10
+npm run ui                                   # giao diện web, cả hai module, cổng 4000
+npm run podcast -- generate <project>        # dựng một tập podcast
+npm run fact    -- generate <project>        # dựng một video fact
 ```
 
-| Command | What it does | Claude calls | TTS calls |
-|---|---|---|---|
-| `prepare <dir>` | copy in, normalise images, write AI previews | 0 | 0 |
-| `generate <id>` | full pipeline | 1 (0 if a storyboard exists) | 1 (0 on cache hit) |
-| `render <id>` | re-render from the existing storyboard and voice | 0 | 0 |
-| `regenerate-content <id>` | discard the storyboard, ask again | 1 | 1 |
-| `generate-all` | every project under `runtime/jobs` | 1 each | 1 each |
-| `validate <mp4>` | check an output file | 0 | 0 |
-
-Useful flags: `--force` rebuilds unchanged input, `--mock-tts` runs the whole
-pipeline offline with placeholder narration.
-
-Tweaking an animation, a caption style or a theme costs nothing: edit
-`storyboard.json` and run `render`. Only `regenerate-content` spends a Claude
-call.
-
-## How it fits together
+Trên giao diện web, mỗi dự án có **một nút "Bắt đầu" chạy hết mọi việc**:
 
 ```
-photos + info.json
-      ↓  Claude (1 call, reads 768px previews)
-storyboard.json          ← the AI/non-AI boundary; everything after is deterministic
-      ↓  Edge TTS
-voice.mp3 + word timings
-      ↓  alignment
-timeline.json            ← frame-exact, the only thing Remotion sees
-      ↓  Remotion + ffmpeg
-video.mp4 → validated → output/
+Ý tưởng → Kịch bản → Ảnh → Giọng đọc → Dựng video → Kiểm tra → Đăng YouTube
 ```
 
-Claude writes copy and picks scenes. It never renders, never computes a
-duration, and never writes JSX - it may only choose from whitelisted scene
-types and animations. The engine never calls Claude and does not know Google
-Drive exists; it only sees `runtime/jobs/<id>/`.
+Màn hình dự án vẽ đúng bảy bước đó thành các ô nối nhau bằng mũi tên: ô đang
+làm thì sáng lên và mũi tên dẫn vào nó chạy, ô đã xong hiện dấu tích kèm một
+dòng cho biết nó tạo ra cái gì, bước dựng video có thanh tiến độ đếm khung
+hình. Chọn nhiều dự án rồi bấm "Chạy tất cả" thì chúng chạy lần lượt.
 
-## Guarantees the code enforces
+> ⚠️ **Bước cuối đăng lên YouTube theo ô "Sau khi dựng xong" của từng dự án, và
+> ô đó mặc định là "Lên lịch".** Nghĩa là một dự án chưa ai chỉnh sẽ *tự đăng*
+> khi chạy xong. Đây là hành vi có từ trước, nút "Bắt đầu" chỉ làm nó dễ chạm
+> tới hơn. Đổi sang "Không đăng" nếu muốn dừng ở bước dựng.
 
-- **Nothing invented.** Prices, specs, warranties and promotions must come from
-  `info.json`, checked mechanically in `src/ai/fact-guard.ts`. With no
-  `info.json`, no number may appear at all - including one spelled out in words.
-- **Captions track the voice.** Scene durations are derived from measured audio,
-  never from the model's guess, and the video always covers the full narration.
-- **Vietnamese narration is mandatory.** A job cannot complete without it, and
-  the check looks at audio content rather than merely at stream presence.
-- **Images are never stretched.** Portrait fills the frame; square and landscape
-  sit sharp over a blurred copy of themselves.
-- **Re-runs are free.** Unchanged input skips in under a second.
+Không có module mặc định. Đây là chủ ý: hai bên có thư mục công việc, bộ nhớ
+đệm và **thông tin đăng nhập YouTube khác nhau**, nên đoán sai module nghĩa là
+chạy nhầm dây chuyền và đăng nhầm kênh.
 
-## Configuration
-
-Everything is in `.env` (see `.env.example`): workspace root, voice, video
-dimensions, feature flags. `DRIVE_ROOT` defaults to a local `./workspace` folder
-and can be pointed at a Google Drive path without any code change.
-
-## Tests
+Xem toàn bộ lệnh của một module:
 
 ```bash
-npm test
+npm run podcast -- --help
+npm run fact -- --help
+```
+
+### Sửa giao diện
+
+Giao diện nằm trong `ui/` (React + Tailwind + shadcn/ui), build bằng Vite ra
+`server/public/`:
+
+```bash
+npm run ui:dev      # dev server có hot reload, cổng 5173, tự proxy API sang 4000
+npm run ui:build    # build ra server/public/ để `npm run ui` phục vụ
+```
+
+`server/public/` là **kết quả build**, không phải mã nguồn — sửa trực tiếp ở đó
+sẽ mất khi build lần sau.
+
+### Vòng lặp nhanh khi sửa code
+
+```bash
 npm run typecheck
+npm run podcast -- generate <project> --mock-tts --no-publish --force
+npm run fact    -- generate <project> --mock-tts --no-publish --force
 ```
 
-The suite concentrates on the parts where a bug would be invisible in a
-finished video: timeline arithmetic, caption alignment, image fitting, and the
-fact guard.
+`--mock-tts` dùng audio câm nhưng đúng độ dài thật (theo tốc độ đọc đã đo của
+từng module), nên bố cục kiểm tra được trong vài chục giây thay vì phải chờ
+tổng hợp giọng. Video dựng bằng nó bị đánh dấu `devMock: true` và không được
+đăng.
 
-## Known fragility
+Vì phần lớn code giờ dùng chung, **hãy kiểm tra cả hai module** sau mỗi thay
+đổi.
 
-Edge TTS is an unofficial Microsoft endpoint that periodically starts rejecting
-clients. Since narration is mandatory, that makes it the single point of
-failure. The TTS cache means unchanged text never re-calls it, `--mock-tts`
-keeps everything else runnable offline, and `TTSProvider` is an interface -
-Azure offers the same `vi-VN-HoaiMyNeural` voice if a paid fallback is needed.
-Anything produced with `--mock-tts` is silent and is stamped `devMock: true`.
+## Giao diện web
+
+`npm run ui` mở một trang duy nhất cho cả hai dây chuyền, chuyển qua lại bằng ô
+chọn ở góc trái trên. Lựa chọn nằm trong URL (`?m=podcast`, `?m=fact`) nên tải
+lại trang hay gửi link cho người khác đều giữ đúng module.
+
+Màn hình thư viện ảnh chỉ xuất hiện ở module Podcast — module Fact tự tìm ảnh
+nên không có gì để quản lý.
+
+## Tài liệu
+
+- [CLAUDE.md](CLAUDE.md) — kiến trúc, ranh giới giữa hai module, và những quy
+  tắc được bảo đảm bằng code chứ không bằng quy ước.
+- [docs/modules/](docs/modules/) — ghi chú kỹ thuật gốc của từng module, giữ
+  nguyên từ trước khi gộp: [podcast](docs/modules/podcast.md),
+  [fact](docs/modules/fact.md), và hai bản hướng dẫn tiếng Việt đi kèm. Chúng có
+  trước khi gộp, nên chỗ nào nói về bố cục hay cấu hình thì code hiện tại đúng
+  hơn — nhưng *lý do* đằng sau từng con số đã tinh chỉnh thì nằm ở đó.

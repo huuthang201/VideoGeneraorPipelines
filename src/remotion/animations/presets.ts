@@ -1,14 +1,19 @@
 import type { AnimationName } from '../../domain/scene';
 
 /**
- * Animation presets (spec §24, §32).
+ * Ken Burns presets.
  *
- * Spec §32 gives one flat whitelist, but the twelve names in it are really two
- * different things: some describe how the *image* moves (Ken Burns), the rest
- * describe how *content* enters. Rather than make Claude reason about that
- * distinction, one name drives both - the image motion is looked up here, and
- * anything that is not a camera move falls back to a gentle default drift so no
- * scene is ever completely static (which is what §24 is guarding against).
+ * Every scene is a still photograph held for seconds or for half a minute, so
+ * this file is the entire reason the result reads as a video rather than as a
+ * slideshow. It is also the reason it can read as *restless*, which is why the
+ * amplitudes are not here: they come from the theme (see MotionAmplitude), and
+ * they are sized to the scene length.
+ *
+ * That sizing is the sharpest difference between the two theme packs. A move
+ * has to complete its travel inside the scene to be felt at all, so the fact
+ * pack's amplitudes are several times the podcast pack's - and the podcast
+ * pack's are small on purpose, because a move that is obvious over three
+ * seconds is intrusive over thirty.
  */
 
 export interface ImageMotion {
@@ -20,25 +25,51 @@ export interface ImageMotion {
   translateYRatio: number;
 }
 
-/** Zoom endpoints. Small on purpose - a heavy zoom reads as cheap. */
-const ZOOM_MIN = 1.0;
-const ZOOM_MAX = 1.14;
+/**
+ * How far the camera travels, as a fraction of the frame.
+ *
+ * Per theme rather than global because the right amount of movement is both a
+ * style decision and a format one: within a pack the night theme moves least
+ * and the daylight one most, and across the packs a four-second scene has to
+ * travel several times as far as a thirty-second one.
+ */
+export interface MotionAmplitude {
+  /** Extra scale at the end of a zoom, e.g. 0.08 means 1.0 -> 1.08. */
+  zoom: number;
+  /** Total overscan held during a pan; half of it is travelled each way. */
+  panOverscan: number;
+  /** Scale travel for `drift`, the almost-imperceptible default. */
+  drift: number;
+}
 
 /**
- * Pans hold a constant overscan so there is material to slide into view. The
- * travel distance is derived from it: at 1.12x there is 12% of slack, and using
- * half of that each way keeps the visible edge comfortably inside the source.
+ * Fallback only, for a caller that has no theme to hand.
+ *
+ * Every real render passes the amplitude from its theme pack, so this value is
+ * never what a finished video moves by. It is set to the fact pack's numbers
+ * because a too-large move is obvious the moment anyone looks, where a
+ * too-small one silently reads as a frozen frame.
  */
-const PAN_OVERSCAN = 1.12;
-const PAN_TRAVEL = (PAN_OVERSCAN - 1) / 2;
-
-/** Applied to non-camera animations so every scene keeps some life. */
-const DRIFT_MIN = 1.0;
-const DRIFT_MAX = 1.05;
+export const DEFAULT_AMPLITUDE: MotionAmplitude = {
+  zoom: 0.22,
+  panOverscan: 1.24,
+  drift: 0.12,
+};
 
 const lerp = (from: number, to: number, t: number): number => from + (to - from) * t;
 
 const STATIC: ImageMotion = { scale: 1, translateXRatio: 0, translateYRatio: 0 };
+
+/**
+ * Eases the ends of a move so it does not start and stop abruptly.
+ *
+ * A linear pan is visible precisely at its two ends, where the picture goes
+ * from still to moving in one frame. Smoothstep costs nothing and removes the
+ * only two moments a viewer would have noticed the camera at all.
+ */
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
 
 /**
  * Image transform for a scene at a given point in its life.
@@ -46,69 +77,44 @@ const STATIC: ImageMotion = { scale: 1, translateXRatio: 0, translateYRatio: 0 }
  * @param animation whitelisted name chosen by Claude
  * @param progress  0 at the scene's first frame, 1 at its last
  */
-export function getImageMotion(animation: AnimationName, progress: number): ImageMotion {
-  const t = clamp01(progress);
+export function getImageMotion(
+  animation: AnimationName,
+  progress: number,
+  amplitude: MotionAmplitude = DEFAULT_AMPLITUDE,
+): ImageMotion {
+  const t = smoothstep(clamp01(progress));
+
+  const zoomMin = 1;
+  const zoomMax = 1 + amplitude.zoom;
+  const panOverscan = amplitude.panOverscan;
+  // Half the slack each way, so the visible edge never leaves the source.
+  const panTravel = (panOverscan - 1) / 2;
 
   switch (animation) {
     case 'none':
       return STATIC;
 
+    case 'drift':
+      return { scale: lerp(1, 1 + amplitude.drift, t), translateXRatio: 0, translateYRatio: 0 };
+
     case 'zoom-in':
-      return { scale: lerp(ZOOM_MIN, ZOOM_MAX, t), translateXRatio: 0, translateYRatio: 0 };
+      return { scale: lerp(zoomMin, zoomMax, t), translateXRatio: 0, translateYRatio: 0 };
 
     case 'zoom-out':
-      return { scale: lerp(ZOOM_MAX, ZOOM_MIN, t), translateXRatio: 0, translateYRatio: 0 };
+      return { scale: lerp(zoomMax, zoomMin, t), translateXRatio: 0, translateYRatio: 0 };
 
     case 'pan-left':
-      return { scale: PAN_OVERSCAN, translateXRatio: lerp(PAN_TRAVEL, -PAN_TRAVEL, t), translateYRatio: 0 };
+      return { scale: panOverscan, translateXRatio: lerp(panTravel, -panTravel, t), translateYRatio: 0 };
 
     case 'pan-right':
-      return { scale: PAN_OVERSCAN, translateXRatio: lerp(-PAN_TRAVEL, PAN_TRAVEL, t), translateYRatio: 0 };
+      return { scale: panOverscan, translateXRatio: lerp(-panTravel, panTravel, t), translateYRatio: 0 };
 
     case 'pan-up':
-      return { scale: PAN_OVERSCAN, translateXRatio: 0, translateYRatio: lerp(PAN_TRAVEL, -PAN_TRAVEL, t) };
+      return { scale: panOverscan, translateXRatio: 0, translateYRatio: lerp(panTravel, -panTravel, t) };
 
     case 'pan-down':
-      return { scale: PAN_OVERSCAN, translateXRatio: 0, translateYRatio: lerp(-PAN_TRAVEL, PAN_TRAVEL, t) };
-
-    // Content-entry animations: the image itself just drifts.
-    case 'fade':
-    case 'spring':
-    case 'slide-left':
-    case 'slide-right':
-    case 'slide-up':
-      return { scale: lerp(DRIFT_MIN, DRIFT_MAX, t), translateXRatio: 0, translateYRatio: 0 };
+      return { scale: panOverscan, translateXRatio: 0, translateYRatio: lerp(-panTravel, panTravel, t) };
   }
-}
-
-export type ContentEntry = 'fade' | 'spring' | 'slide-left' | 'slide-right' | 'slide-up' | 'none';
-
-/**
- * How the headline enters. Camera moves carry the motion themselves, so their
- * text just fades in rather than competing with the pan.
- */
-export function getContentEntry(animation: AnimationName): ContentEntry {
-  switch (animation) {
-    case 'fade':
-      return 'fade';
-    case 'spring':
-      return 'spring';
-    case 'slide-left':
-      return 'slide-left';
-    case 'slide-right':
-      return 'slide-right';
-    case 'slide-up':
-      return 'slide-up';
-    case 'none':
-      return 'none';
-    default:
-      return 'fade';
-  }
-}
-
-/** True when the animation needs overscan to avoid showing frame edges. */
-export function requiresOverscan(animation: AnimationName): boolean {
-  return animation.startsWith('pan-');
 }
 
 function clamp01(value: number): number {

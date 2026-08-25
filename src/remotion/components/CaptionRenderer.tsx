@@ -1,8 +1,7 @@
-import { AbsoluteFill, useCurrentFrame, useVideoConfig } from 'remotion';
 import type { CaptionPage } from '../../domain/timeline';
 import type { Theme } from '../themes/theme';
-import { FONT_STACK } from '../fonts';
-import { SAFE_AREA } from './SafeArea';
+import { PodcastCaption } from './captions/PodcastCaption';
+import { FactCaption } from './captions/FactCaption';
 
 export interface CaptionRendererProps {
   /** Scene-local pages: startMs is measured from the scene's first frame. */
@@ -11,71 +10,42 @@ export interface CaptionRendererProps {
 }
 
 /**
- * TikTok-style captions with word-level highlighting (spec §18).
+ * The subtitle, timed to the voice - in whichever of the two forms the module
+ * calls for.
  *
- * Timing here is never inferred from the scene's length - every page and token
- * carries a millisecond stamp derived from the actual TTS word boundaries, so
- * the highlight tracks the voice rather than an estimate of it. That is the
- * whole reason the timeline is built after the audio is measured.
+ * This is the one place in the Remotion tree that is genuinely two components
+ * rather than one component with two sets of numbers, and it is worth saying
+ * why, because the temptation to unify them is constant and the result would be
+ * worse than either.
+ *
+ * **The podcast subtitle is bilingual, and the two lines are not the same kind
+ * of thing.** The English line is what is being said *now* - word-timed from
+ * the TTS boundaries, so the word in the narrator's mouth is the bright one.
+ * The Vietnamese line under it is the meaning of the whole page, held for as
+ * long as the page is, because the two languages order ideas differently and a
+ * word-by-word Vietnamese highlight would point at the wrong word most of the
+ * time. It is set smaller and dimmer deliberately: two lines competing at equal
+ * weight is what makes a bilingual subtitle unreadable. There is a translucent
+ * plate behind the pair, which is what keeps them legible over a bright sky.
+ *
+ * **The fact subtitle is one line, and on a muted play it is the video.** It is
+ * set large and heavy for a phone, the inactive words stay fully opaque because
+ * the whole line has to be read in the half second it is on screen, and the
+ * highlight is scaled as well as recoloured because colour alone is not
+ * findable at a glance. There is no plate: at this size it would cover a third
+ * of the picture, and a rectangle appearing and disappearing every second and a
+ * half is the most distracting thing in the frame.
+ *
+ * Squeezing both into one component would mean a conditional on nearly every
+ * style property, which is how the two quietly drift into looking like each
+ * other. The dispatch is on `theme.pack` rather than on a prop threaded down
+ * from the timeline, because the theme is already the thing carrying a module's
+ * visual identity and every caller has one.
  */
 export const CaptionRenderer: React.FC<CaptionRendererProps> = ({ pages, theme }) => {
-  const frame = useCurrentFrame();
-  const { fps, width, height } = useVideoConfig();
-  const nowMs = (frame / fps) * 1000;
-
-  const page = pages.find((p) => nowMs >= p.startMs && nowMs < p.startMs + p.durationMs);
-  if (!page) return null;
-
-  return (
-    <AbsoluteFill
-      style={{
-        // Positioned by ratio rather than nested in SafeArea so the caption can
-        // sit at a precise height while still clearing the interaction column.
-        // Resolved to pixels because percentage padding is relative to width,
-        // which at 9:16 would place the caption far higher than configured.
-        paddingLeft: width * SAFE_AREA.left,
-        paddingRight: width * SAFE_AREA.right,
-        paddingTop: height * theme.caption.positionRatio,
-        justifyContent: 'flex-start',
-        alignItems: 'center',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-          gap: '0.28em',
-          fontFamily: FONT_STACK,
-          fontSize: theme.caption.fontSize,
-          fontWeight: theme.caption.fontWeight,
-          lineHeight: theme.caption.lineHeight,
-          textAlign: 'center',
-          ...(theme.caption.background
-            ? {
-                backgroundColor: theme.caption.background,
-                padding: '0.24em 0.44em',
-                borderRadius: 20,
-              }
-            : {}),
-        }}
-      >
-        {page.tokens.map((token, i) => {
-          const active = nowMs >= token.fromMs && nowMs < token.toMs;
-          return (
-            <span
-              key={`${token.text}-${token.fromMs}-${i}`}
-              style={{
-                color: active ? theme.colors.captionHighlight : theme.colors.captionText,
-                textShadow: '0 3px 16px rgba(0,0,0,0.75)',
-                transition: 'none',
-              }}
-            >
-              {token.text}
-            </span>
-          );
-        })}
-      </div>
-    </AbsoluteFill>
+  return theme.pack === 'podcast' ? (
+    <PodcastCaption pages={pages} theme={theme} />
+  ) : (
+    <FactCaption pages={pages} theme={theme} />
   );
 };

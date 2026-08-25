@@ -2,6 +2,7 @@ import path from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { TTSInput, TTSProvider, TTSResult, WordTiming } from './types';
 import { serializeSrt, wordsToCues } from './srt';
+import { restorePunctuation } from './punctuation';
 import { exec } from '../utils/exec';
 import { getDurationSeconds } from '../video/ffprobe';
 import { ERROR_CODES, PipelineError } from '../domain/errors';
@@ -16,7 +17,22 @@ interface SynthPayload {
 }
 
 /**
- * Vietnamese narration via Microsoft Edge's read-aloud service (spec §13).
+ * Ceiling for one synthesis call, when the caller names none.
+ *
+ * One call carries a whole script, so the right ceiling depends entirely on how
+ * long that script is - and the two modules are an order of magnitude apart.
+ * Forty-five seconds of speech comes back in a few seconds on a healthy
+ * connection; ten minutes of it does not, and a two-minute ceiling would fail
+ * every podcast episode without anything being wrong.
+ *
+ * Two minutes is the default because it suits the short, whose queue is dozens
+ * of videos long and where a hung call parking the queue is the real risk. The
+ * podcast module passes its own.
+ */
+const DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
+ * Vietnamese narration via Microsoft Edge's read-aloud service.
  *
  * The actual protocol work is delegated to scripts/edge_tts_synth.py rather
  * than reimplemented in Node. That is deliberate: the endpoint is unofficial
@@ -24,18 +40,27 @@ interface SynthPayload {
  * the recurring example). The Python `edge-tts` package is where those changes
  * get fixed first and fastest, so tracking it costs one subprocess call and
  * buys the shortest path to a working voice when the service shifts.
+ *
+ * One call synthesises the whole script. The service streams a single
+ * utterance of any length and reports a boundary event per word throughout -
+ * for Vietnamese one per syllable, which is exactly the granularity the
+ * subtitles want - so splitting the script up would buy nothing and would
+ * introduce seams in the audio.
  */
 export class EdgeTTSProvider implements TTSProvider {
   readonly name = 'edge';
 
-  constructor(private readonly pythonBin: string) {}
+  constructor(
+    private readonly pythonBin: string,
+    private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  ) {}
 
   async synthesize(input: TTSInput): Promise<TTSResult> {
     if (!input.text.trim()) {
       throw new PipelineError(
         ERROR_CODES.TTS_GENERATION_FAILED,
         'generate-tts',
-        'Refusing to synthesize empty text; Vietnamese narration is mandatory (spec §7)',
+        'Refusing to synthesize empty text; narration is mandatory',
       );
     }
 
@@ -47,11 +72,18 @@ export class EdgeTTSProvider implements TTSProvider {
 
     const script = path.join(process.cwd(), 'scripts', 'edge_tts_synth.py');
     const args = [script, '--text-file', textPath, '--voice', input.voice, '--out', audioPath];
-    if (input.rate) args.push('--rate', input.rate);
+
+    // `--pitch=-10Hz`, not `--pitch -10Hz`. Passed as two arguments, argparse
+    // reads a leading minus as the start of another option and rejects the
+    // call, which made every negative value - that is, every deeper or slower
+    // delivery - impossible to request.
+    if (input.rate) args.push(`--rate=${input.rate}`);
+    if (input.pitch) args.push(`--pitch=${input.pitch}`);
+    if (input.volume) args.push(`--volume=${input.volume}`);
 
     let result;
     try {
-      result = await exec(this.pythonBin, args, { timeoutMs: 180_000 });
+      result = await exec(this.pythonBin, args, { timeoutMs: this.timeoutMs });
     } catch (err) {
       throw new PipelineError(
         ERROR_CODES.TTS_PYTHON_MISSING,
@@ -83,7 +115,9 @@ export class EdgeTTSProvider implements TTSProvider {
       );
     }
 
-    const words = payload.words ?? [];
+    // The service reports spoken words, stripped of punctuation; the captions
+    // are built from these timings, so they get the script's own tokens back.
+    const words = restorePunctuation(input.text, payload.words ?? []);
 
     const captionsPath = path.join(input.outDir, 'captions.srt');
     await writeFile(captionsPath, serializeSrt(wordsToCues(words)), 'utf8');

@@ -1,8 +1,11 @@
 import type { Timeline } from '../../domain/timeline';
 
 /**
- * Background music must never sit on top of the Vietnamese narration (spec §34:
- * narration > SFX > music).
+ * Background music must never sit on top of the narration.
+ *
+ * Nothing sets a music track today - the pipeline passes `music: null` - so this
+ * is inert until one is added. It is kept because the mixing rule is the part
+ * that is easy to get wrong, not the wiring.
  *
  * Rather than duck for the whole video - which would make the music pointless -
  * we duck only while words are actually being spoken. The caption pages already
@@ -10,11 +13,24 @@ import type { Timeline } from '../../domain/timeline';
  * speech is, including the gaps between sentences where music can come back up.
  */
 
-export const MUSIC_VOLUME = {
+/**
+ * Duck *factors*, not levels: the number here multiplies `MUSIC_VOLUME` from
+ * configuration rather than replacing it.
+ *
+ * That distinction was a real bug, and an invisible one. These used to be
+ * absolute levels (0.06 and 0.15) and the composition *also* multiplied by the
+ * configured volume, so a perfectly reasonable MUSIC_VOLUME=0.12 came out at
+ * 0.0072 under speech - inaudible on any speaker, while every log line said
+ * the music track was present and mixed.
+ *
+ * 0.35 under speech is far enough down that the voice is never fighting it and
+ * far enough up that a listener can tell the music did not stop.
+ */
+export const MUSIC_DUCK = {
   /** While the narrator is speaking. */
-  ducked: 0.06,
-  /** In the gaps. Still well under the voice (spec §34 gives 0.08-0.15). */
-  open: 0.15,
+  ducked: 0.35,
+  /** In the gaps between sentences and scenes. */
+  open: 1,
 } as const;
 
 /** Milliseconds of lead-in/out so the music dips before a word, not on it. */
@@ -68,14 +84,14 @@ export function isSpeakingAtMs(intervals: readonly SpeechInterval[], ms: number)
  * Music volume for a given frame.
  *
  * With no caption data at all (a timeline built before TTS exists, as in M1)
- * this returns the open level throughout rather than ducking forever.
+ * this returns the open factor throughout rather than ducking forever.
  */
 export function musicVolumeAtFrame(
   intervals: readonly SpeechInterval[],
   frame: number,
   fps: number,
 ): number {
-  if (intervals.length === 0) return MUSIC_VOLUME.open;
+  if (intervals.length === 0) return MUSIC_DUCK.open;
   const ms = (frame / fps) * 1000;
-  return isSpeakingAtMs(intervals, ms) ? MUSIC_VOLUME.ducked : MUSIC_VOLUME.open;
+  return isSpeakingAtMs(intervals, ms) ? MUSIC_DUCK.ducked : MUSIC_DUCK.open;
 }

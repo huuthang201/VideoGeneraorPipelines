@@ -1,6 +1,13 @@
 import { z } from 'zod';
-import { AnimationNameSchema, ImageFitSchema, SceneTypeSchema, TransitionNameSchema } from './scene';
-import { StyleNameSchema } from './config';
+import {
+  AnimationNameSchema,
+  ImageFitSchema,
+  SceneEffectSchema,
+  SceneOverlaySchema,
+  SceneTypeSchema,
+  TransitionNameSchema,
+} from './scene';
+import { ModuleIdSchema, StyleNameSchema } from './config';
 
 /**
  * The Timeline is the single source of truth for rendering, and the only thing
@@ -26,17 +33,74 @@ export const CaptionTokenSchema = z.strictObject({
 export type CaptionToken = z.infer<typeof CaptionTokenSchema>;
 
 /**
- * A caption "page" - the 2-5 word chunk shown at once (spec §18).
- * Mirrors the TikTokPage shape from @remotion/captions so the two interop
- * without a translation layer.
+ * A caption "page" - the subtitle line shown at once, with the words that make
+ * it up. Mirrors the TikTokPage shape from @remotion/captions so the two
+ * interop without a translation layer.
+ *
+ * Whether there is a second line under the first is the module's decision, and
+ * the two answers come from the same reasoning rather than from a preference. A
+ * podcast is narrated in English to a Vietnamese audience, so the pair carries
+ * meaning the viewer would otherwise miss, and a 16:9 frame has room for it. A
+ * fact short is already in the viewer's language, and a vertical frame has room
+ * for one line of type at the size a phone needs.
  */
 export const CaptionPageSchema = z.strictObject({
   text: z.string(),
+  /**
+   * The translated line shown under the first, or empty for a module that
+   * subtitles in one language.
+   *
+   * Whole-phrase rather than word-timed: two languages do not put the same idea
+   * in the same order, so there is no honest per-word mapping between them. It
+   * appears and disappears with the page it belongs to.
+   */
+  translation: z.string().default(''),
   startMs: z.number().nonnegative(),
   durationMs: z.number().nonnegative(),
   tokens: z.array(CaptionTokenSchema),
 });
 export type CaptionPage = z.infer<typeof CaptionPageSchema>;
+
+/**
+ * Who took the photograph, drawn in the corner of the scene.
+ *
+ * Carried in the timeline rather than looked up at render time because it is
+ * part of the frame: the pictures are found by searching an openly-licensed
+ * library, and several of those licences require the creator to be named
+ * wherever the work appears. A credit that lived only in the video description
+ * would satisfy nobody, and a credit resolved at render time could go missing
+ * on a re-render without anything failing.
+ */
+export const ImageCreditSchema = z.strictObject({
+  /** The short form actually drawn on screen, e.g. "Tim Gouw · CC0". */
+  label: z.string().min(1),
+  creator: z.string().min(1),
+  /**
+   * The rest of the attribution, carried so the publishing kit can be rebuilt
+   * from the timeline alone. `publish-kit` re-runs long after the search
+   * results are gone, and a written credit missing its licence URL is not a
+   * credit anybody could check.
+   */
+  license: z.string().min(1),
+  licenseUrl: z.string().min(1),
+  sourceUrl: z.string().min(1),
+});
+export type TimelineImageCredit = z.infer<typeof ImageCreditSchema>;
+
+/**
+ * The backdrop layer: one photograph filling the frame, already resolved to a
+ * path inside the staged bundle.
+ */
+export const TimelineBackgroundSchema = z.strictObject({
+  /** Path relative to the Remotion public dir, for staticFile(). */
+  src: z.string().min(1),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  fit: ImageFitSchema,
+  /** Null only for a hand-authored timeline that names no source. */
+  credit: ImageCreditSchema.nullable().default(null),
+});
+export type TimelineBackground = z.infer<typeof TimelineBackgroundSchema>;
 
 export const TimelineSceneSchema = z.strictObject({
   id: z.string().min(1),
@@ -44,18 +108,15 @@ export const TimelineSceneSchema = z.strictObject({
   /** Absolute start frame within the composition. */
   from: z.number().int().nonnegative(),
   durationInFrames: z.number().int().positive(),
-  headline: z.string(),
-  image: z.strictObject({
-    /** Path relative to the Remotion public dir, for staticFile(). */
-    src: z.string().min(1),
-    width: z.number().int().positive(),
-    height: z.number().int().positive(),
-    fit: ImageFitSchema,
-  }),
+  /** On-screen title for this beat. Empty is legal, and usual. */
+  title: z.string(),
+  background: TimelineBackgroundSchema,
   /** Scene-local caption pages. Empty is legal (a scene may carry no narration). */
   captionPages: z.array(CaptionPageSchema),
   animation: AnimationNameSchema,
   transition: TransitionNameSchema,
+  effect: SceneEffectSchema.default('none'),
+  overlay: SceneOverlaySchema.default('none'),
 });
 export type TimelineScene = z.infer<typeof TimelineSceneSchema>;
 
@@ -71,9 +132,19 @@ export const TimelineSchema = z
     }),
     style: StyleNameSchema,
     /**
-     * The single narration track (spec §15-16). Optional only so that M1 can
-     * render before TTS exists; the output validator makes it mandatory for any
-     * job that reaches DONE.
+     * Which module produced this timeline, and therefore which theme pack
+     * Remotion renders it with.
+     *
+     * It has to travel in the file rather than be read from configuration,
+     * because the composition runs in a browser: the bundle has no .env and no
+     * `loadConfig`. Defaulted to `podcast` so a timeline written before the two
+     * pipelines were merged still parses and still renders the way it did.
+     */
+    module: ModuleIdSchema.default('podcast'),
+    /**
+     * The single narration track. Optional only so a composition can be
+     * previewed before TTS has run; the output validator makes it mandatory for
+     * any job that reaches DONE.
      */
     voice: z
       .strictObject({

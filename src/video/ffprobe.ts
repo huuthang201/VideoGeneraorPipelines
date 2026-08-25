@@ -97,7 +97,7 @@ export function findStream(info: MediaInfo, type: 'video' | 'audio'): MediaStrea
  * Needed because Remotion emits an AAC track even for a composition with no
  * <Audio> at all (verified in M0), so "an audio stream exists" says nothing
  * about whether the narration actually made it into the file. Spec §7 makes
- * Vietnamese narration mandatory, so the output gate has to check the content
+ * Narration is mandatory, so the output gate has to check the content
  * of the track and not merely its presence.
  */
 export async function detectSilenceRatio(filePath: string, totalSeconds: number): Promise<number> {

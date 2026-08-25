@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "video-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "ui"
+      ],
+      "port": 4000,
+      "autoPort": true
+    }
+  ]
+}
