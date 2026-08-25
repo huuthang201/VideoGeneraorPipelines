@@ -151,7 +151,7 @@ export async function authorize(
   } catch (err) {
     server.close();
     throw new PipelineError(
-      ERROR_CODES.AI_CALL_FAILED,
+      ERROR_CODES.YOUTUBE_UPLOAD_FAILED,
       'publish',
       `Could not listen on ${redirectUri} (${err instanceof Error ? err.message : String(err)}). ` +
         'Something else is using that port - set YOUTUBE_REDIRECT_PORT to a free one, and ' +
@@ -237,7 +237,7 @@ export async function authorize(
 
   if (!token.refresh_token) {
     throw new PipelineError(
-      ERROR_CODES.AI_CALL_FAILED,
+      ERROR_CODES.YOUTUBE_UPLOAD_FAILED,
       'publish',
       'Google returned no refresh token. Remove this app from ' +
         'https://myaccount.google.com/permissions and authorise again.',
@@ -371,7 +371,7 @@ async function accessToken(credentials: YouTubeCredentials): Promise<string> {
   const raw = await readFile(credentials.tokenPath, 'utf8').catch(() => null);
   if (!raw) {
     throw new PipelineError(
-      ERROR_CODES.AI_CALL_FAILED,
+      ERROR_CODES.YOUTUBE_UPLOAD_FAILED,
       'publish',
       'Not authorised yet. Run: npx tsx src/cli/index.ts youtube-auth',
     );
@@ -387,7 +387,7 @@ async function accessToken(credentials: YouTubeCredentials): Promise<string> {
 
   if (!token.access_token) {
     throw new PipelineError(
-      ERROR_CODES.AI_CALL_FAILED,
+      ERROR_CODES.YOUTUBE_UPLOAD_FAILED,
       'publish',
       'Could not refresh the Google token. Consent may have been revoked, or the OAuth ' +
         'consent screen is still in Testing mode, where refresh tokens expire after 7 days. ' +
@@ -396,6 +396,63 @@ async function accessToken(credentials: YouTubeCredentials): Promise<string> {
   }
 
   return token.access_token as string;
+}
+
+
+/**
+ * Turns YouTube's refusal into something an operator can act on.
+ *
+ * The API answers with a JSON envelope whose `reason` is the only part worth
+ * reading, and the raw body was being passed straight through - four hundred
+ * characters of nested JSON, of which the interface then showed the first
+ * line: `YouTube refused the upload session (400): {`. A brace. The actual
+ * sentence, "The user has exceeded the number of videos they may upload", was
+ * three lines further down and never reached anybody.
+ *
+ * `uploadLimitExceeded` gets its own code as well as its own sentence, because
+ * it is the one refusal that is not a fault. A channel publishing every two
+ * hours will meet it, nothing is broken when it does, and the only correct
+ * response is to wait for the cap to reset - which is a different instruction
+ * from every other error this pipeline can raise.
+ */
+function refusalError(status: number, body: string): PipelineError {
+  let reason: string | undefined;
+  let message: string | undefined;
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { message?: string; errors?: { reason?: string }[] };
+    };
+    reason = parsed.error?.errors?.[0]?.reason;
+    message = parsed.error?.message;
+  } catch {
+    // Not JSON. The raw body is then the best available answer.
+  }
+
+  if (reason === 'uploadLimitExceeded') {
+    return new PipelineError(
+      ERROR_CODES.YOUTUBE_UPLOAD_LIMIT,
+      'publish',
+      'YouTube da tu choi: kenh nay da dat gioi han so video duoc tai len trong ngay ' +
+        '(uploadLimitExceeded). Day khong phai loi cua pipeline - video van con nguyen tren dia. ' +
+        'Doi han muc reset roi dang lai; suat lich cua no da duoc tra ve hang doi.',
+    );
+  }
+
+  if (reason === 'quotaExceeded' || reason === 'rateLimitExceeded') {
+    return new PipelineError(
+      ERROR_CODES.YOUTUBE_UPLOAD_LIMIT,
+      'publish',
+      `YouTube da tu choi: het han muc goi API trong ngay (${reason}). Doi han muc reset ` +
+        'roi dang lai. Video van con nguyen tren dia.',
+    );
+  }
+
+  return new PipelineError(
+    ERROR_CODES.YOUTUBE_UPLOAD_FAILED,
+    'publish',
+    `YouTube refused the upload (${status})` +
+      `${reason ? ` [${reason}]` : ''}: ${message ?? body.slice(0, 300).replace(/\s+/gu, ' ')}`,
+  );
 }
 
 export async function uploadVideo(
@@ -445,18 +502,12 @@ export async function uploadVideo(
     },
   );
 
-  if (!start.ok) {
-    throw new PipelineError(
-      ERROR_CODES.AI_CALL_FAILED,
-      'publish',
-      `YouTube refused the upload session (${start.status}): ${(await start.text()).slice(0, 400)}`,
-    );
-  }
+  if (!start.ok) throw refusalError(start.status, await start.text());
 
   const sessionUrl = start.headers.get('location');
   if (!sessionUrl) {
     throw new PipelineError(
-      ERROR_CODES.AI_CALL_FAILED,
+      ERROR_CODES.YOUTUBE_UPLOAD_FAILED,
       'publish',
       'YouTube accepted the request but returned no upload session URL.',
     );
@@ -506,7 +557,7 @@ export async function uploadVideo(
       }
 
       throw new PipelineError(
-        ERROR_CODES.AI_CALL_FAILED,
+        ERROR_CODES.YOUTUBE_UPLOAD_FAILED,
         'publish',
         `Upload failed at ${Math.round((uploaded / size) * 100)}% (${response.status}): ` +
           `${(await response.text()).slice(0, 300)}`,
@@ -518,7 +569,7 @@ export async function uploadVideo(
 
   if (!videoId) {
     throw new PipelineError(
-      ERROR_CODES.AI_CALL_FAILED,
+      ERROR_CODES.YOUTUBE_UPLOAD_FAILED,
       'publish',
       'Upload finished but YouTube returned no video id.',
     );
@@ -589,7 +640,7 @@ async function postForm(url: string, form: Record<string, string>): Promise<Reco
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     throw new PipelineError(
-      ERROR_CODES.AI_CALL_FAILED,
+      ERROR_CODES.YOUTUBE_UPLOAD_FAILED,
       'publish',
       `Google returned ${response.status}: ${JSON.stringify(payload).slice(0, 300)}`,
     );

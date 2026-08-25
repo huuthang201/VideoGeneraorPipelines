@@ -2,6 +2,7 @@ import { MODULE_IDS, type ModuleId } from '../domain/config';
 import type { SceneLike, StoryboardLike, VideoModule } from './contract';
 import { podcastModule } from './podcast';
 import { factModule } from './fact';
+import { psychModule } from './psych';
 import type { BaseBrief } from '../domain/brief';
 
 export type { VideoModule, SceneLike, StoryboardLike } from './contract';
@@ -9,7 +10,9 @@ export type { VideoModule, SceneLike, StoryboardLike } from './contract';
 /**
  * The registry.
  *
- * Two pipelines in one repository, sharing about two thirds of their code. See
+ * Three channels in one repository. Two of them - `fact` and `psych` - are the
+ * same pipeline with different writing, and share everything under
+ * `modules/shorts`; the podcast is a genuinely different shape. See
  * `contract.ts` for what a module owns and why.
  *
  * The type is deliberately widened here: each module is strongly typed in terms
@@ -22,6 +25,7 @@ export type AnyVideoModule = VideoModule<BaseBrief, SceneLike, StoryboardLike<Sc
 const MODULES = {
   podcast: podcastModule as unknown as AnyVideoModule,
   fact: factModule as unknown as AnyVideoModule,
+  psych: psychModule as unknown as AnyVideoModule,
 } satisfies Record<ModuleId, AnyVideoModule>;
 
 export function getModule(id: ModuleId): AnyVideoModule {

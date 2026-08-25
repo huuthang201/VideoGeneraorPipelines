@@ -12,12 +12,14 @@ import type { Logger } from '../../utils/logger';
 import { callClaude, extractJson } from '../../ai/claude-runner';
 import { checkFacts } from '../../ai/fact-guard';
 import { factGuardLanguage } from './fact-guard-lang';
-import { buildRetryPrompt, buildStoryboardPrompt, targetWordsFor } from './prompts/generate-storyboard';
+import { targetWordsFor } from './pacing';
+import type { ShortsPrompts } from './prompts';
+import { buildRetryPrompt } from './prompt-parts';
 import { languageOf } from '../../tts/types';
 import type { GenerateStoryboardInput } from '../contract';
 
 /**
- * Storyboard generation for a fact short.
+ * Storyboard generation for a short.
  *
  * The model writes the script and names the visual themes; it is given no tools
  * at all, because there is nothing on disk for it to look at - the photographs
@@ -59,12 +61,20 @@ const MAX_ATTEMPTS = 3;
  */
 const CLAUDE_TIMEOUT_MS = 180_000;
 
-export async function generateStoryboard(
+/**
+ * Bound to a channel's prompts, and to nothing else about it.
+ *
+ * A factory rather than a function because the retry loop, the three gates and
+ * the draft-to-storyboard fill-in are identical for every channel here - only
+ * the words asking for the script differ. See `prompts.ts`.
+ */
+export function makeGenerateStoryboard(prompts: ShortsPrompts) {
+  return async function generateStoryboard(
   input: GenerateStoryboardInput<Brief>,
   config: AppConfig,
   logger: Logger,
 ): Promise<Storyboard> {
-  const basePrompt = buildStoryboardPrompt({
+  const basePrompt = prompts.buildStoryboardPrompt({
     projectId: input.projectId,
     workingTitle: input.info?.name ?? input.projectId,
     info: input.info,
@@ -138,6 +148,7 @@ export async function generateStoryboard(
     'generate-storyboard',
     `Claude did not produce an acceptable storyboard in ${MAX_ATTEMPTS} attempts. Last problem:\n${lastProblem}`,
   );
+  };
 }
 
 /** Fills in everything the model was deliberately not asked for. */

@@ -1,10 +1,9 @@
 import { SuggestedBriefSchema, type SuggestedBrief } from '../../domain/brief';
-import type { ProductInfo } from '../../domain/project';
 import type { AppConfig } from '../../config/env';
 import type { Logger } from '../../utils/logger';
 import { ERROR_CODES, PipelineError } from '../../domain/errors';
 import { exec } from '../../utils/exec';
-import { buildSuggestBriefPrompt } from './prompts/suggest-brief';
+import type { ShortsPrompts, SuggestBriefPromptInput } from './prompts';
 import { extractJson } from '../../ai/claude-runner';
 
 /**
@@ -16,12 +15,13 @@ import { extractJson } from '../../ai/claude-runner';
  */
 const CLAUDE_TIMEOUT_MS = 120_000;
 
-export async function suggestBrief(
+export function makeSuggestBrief(prompts: ShortsPrompts) {
+  return async function suggestBrief(
   config: AppConfig,
   logger: Logger,
-  input: { topic: string; info: ProductInfo | null; alreadyCovered: readonly string[] },
+  input: SuggestBriefPromptInput,
 ): Promise<SuggestedBrief> {
-  const prompt = buildSuggestBriefPrompt(input);
+  const prompt = prompts.buildSuggestBriefPrompt(input);
 
   const result = await exec(
     config.ai.claudeBin,
@@ -73,6 +73,7 @@ export async function suggestBrief(
     );
   }
 
-  logger.done(`Suggested a fact about "${input.topic}"`);
+  logger.done(`Suggested a subject around "${input.topic}"`);
   return parsed.data;
+  };
 }

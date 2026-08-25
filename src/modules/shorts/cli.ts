@@ -5,12 +5,13 @@ import { OpenverseProvider } from './image/stock/openverse.provider';
 import { MIN_IMAGE_EDGE } from './image/stock/resolve';
 
 /**
- * The fact module's own CLI commands.
+ * CLI commands for any module that searches for its own photographs.
  *
- * Registered only when the CLI is running as this module. `stock-search` has no
- * meaning for the podcast, whose photographs are uploaded rather than found.
+ * Registered by the module rather than by the CLI, so a new channel gets them
+ * by construction. `stock-search` has no meaning for the podcast, whose
+ * photographs are uploaded rather than found.
  */
-export function registerFactCommands(
+export function registerShortsCommands(
   program: Command,
   loadModuleConfig: () => AppConfig,
   run: (fn: () => Promise<void>, logger: Logger) => Promise<void>,

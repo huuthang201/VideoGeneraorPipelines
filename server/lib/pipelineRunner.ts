@@ -170,6 +170,36 @@ function stepForLine(module: ModuleId, projectId: string, entry: LiveRun | undef
  * engine naming its own failure rather than the last thing it happened to print
  * on the way down.
  */
+/**
+ * The last `✗` line *and its continuation*.
+ *
+ * Taking the marked line alone was not enough, and the way it failed was
+ * particularly unhelpful: YouTube's refusal is one line ending in `{` followed
+ * by the JSON that says why, so the interface reported
+ * `YouTube refused the upload session (400): {` - a brace - while the sentence
+ * "The user has exceeded the number of videos they may upload" sat three lines
+ * below, unread. A multi-line message is one message; it ends where the next
+ * marked line begins, not at the first newline.
+ */
+function markedFailure(lines: string[]): string | null {
+  const start = lines.findLastIndex((line) => line.startsWith('✗'));
+  if (start === -1) return null;
+
+  const rest = lines.slice(start + 1);
+  const nextMark = rest.findIndex((line) => /^[✓✗!→]/u.test(line));
+  const body = nextMark === -1 ? rest : rest.slice(0, nextMark);
+
+  const whole = [lines[start], ...body].join(' ').replace(/\s+/gu, ' ').trim();
+
+  // Capped, because a zod rejection lists every field and runs to two thousand
+  // characters - which is a toast covering the screen. The full text is never
+  // lost: the step's log panel has it verbatim, and this is the summary.
+  return whole.length > MAX_MESSAGE_CHARS ? `${whole.slice(0, MAX_MESSAGE_CHARS)}…` : whole;
+}
+
+/** Long enough for a sentence and a reason, short enough for a toast. */
+const MAX_MESSAGE_CHARS = 400;
+
 function failureMessage(stdout: string, stderr: string, code: number | null): string {
   const clean = (text: string) =>
     text
@@ -180,8 +210,8 @@ function failureMessage(stdout: string, stderr: string, code: number | null): st
   const errLines = clean(stderr);
   const outLines = clean(stdout);
 
-  const marked = [...errLines, ...outLines].filter((line) => line.startsWith('✗'));
-  if (marked.length > 0) return marked.slice(-2).join(' ');
+  const marked = markedFailure(errLines) ?? markedFailure(outLines);
+  if (marked) return marked;
   if (errLines.length > 0) return errLines.slice(-3).join(' ');
   return outLines.slice(-3).join(' ') || `Thoát mã ${code}`;
 }

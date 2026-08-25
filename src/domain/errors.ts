@@ -44,6 +44,26 @@ export const ERROR_CODES = {
   OUTPUT_WRONG_RESOLUTION: 'OUTPUT_WRONG_RESOLUTION',
   OUTPUT_BAD_DURATION: 'OUTPUT_BAD_DURATION',
   OUTPUT_UNREADABLE: 'OUTPUT_UNREADABLE',
+
+  // publish
+  /**
+   * YouTube refused the upload, for any reason of its own.
+   *
+   * Everything in `publish/youtube.ts` used to throw `AI_CALL_FAILED`, which
+   * put "AI" in front of every message about a video the model never touched -
+   * so an operator reading `AI_CALL_FAILED at publish` reasonably went looking
+   * at Claude. Nothing in publishing calls a model.
+   */
+  YOUTUBE_UPLOAD_FAILED: 'YOUTUBE_UPLOAD_FAILED',
+  /**
+   * The channel has hit YouTube's cap on videos per day.
+   *
+   * Its own code because it is not a fault: nothing is broken, nothing needs
+   * fixing, and the only correct response is to wait. Told apart from a real
+   * failure it stops an operator debugging a working system - and it is the
+   * single most likely refusal on a channel publishing every two hours.
+   */
+  YOUTUBE_UPLOAD_LIMIT: 'YOUTUBE_UPLOAD_LIMIT',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

@@ -1,4 +1,4 @@
-import type { ProductInfo } from '../../../domain/project';
+import type { SuggestBriefPromptInput } from '../../shorts/prompts';
 
 /**
  * A short, single-shot prompt used before the real storyboard prompt: it asks
@@ -18,27 +18,6 @@ import type { ProductInfo } from '../../../domain/project';
  * comes back goes straight into two boxes a Vietnamese speaker reads, and then
  * into a prompt that has to produce Vietnamese prose.
  */
-export interface SuggestBriefPromptInput {
-  /**
-   * What the project is called, used as the subject to find a fact inside.
-   *
-   * The project name is the only thing a person types before asking for a
-   * suggestion, so it is the only signal of what they wanted. Treated as a
-   * *hint* rather than a constraint: names like "Dự án 2" carry no subject, and
-   * a prompt that insisted on one would produce a fact about the number two.
-   */
-  topic: string;
-  info: ProductInfo | null;
-  /**
-   * Titles the channel has already published or drafted.
-   *
-   * Passed so the suggestion is not one of them. At a video an hour a channel
-   * exhausts the obvious facts within days, and nothing else in the system has
-   * any memory of what it has already said.
-   */
-  alreadyCovered: readonly string[];
-}
-
 /** How many past titles to show. Enough to avoid repeats, short enough to read. */
 const MAX_COVERED = 40;
 

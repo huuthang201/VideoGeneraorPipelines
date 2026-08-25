@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import path from 'node:path';
 import { readdir, mkdir, rm, rename, writeFile, readFile, cp } from 'node:fs/promises';
-import { loadConfig, libraryPaths, jobPaths, type AppConfig } from '../config/env';
+import { loadConfig, jobPaths, type AppConfig } from '../config/env';
 import { createLogger } from '../utils/logger';
 import {
   runPipeline,
@@ -19,11 +19,6 @@ import { TimelineSchema } from '../domain/timeline';
 import { buildPublishKit, readMusicCredit, writePublishKit } from '../pipeline/publish-kit';
 import { prepareProject } from './prepare';
 import { getModule, parseModuleId, type AnyVideoModule } from '../modules';
-import { readLibrary } from '../modules/podcast/image/library';
-import { registerPodcastCommands } from '../modules/podcast/cli';
-import { registerFactCommands } from '../modules/fact/cli';
-import { suggestBrief as suggestPodcastBrief } from '../modules/podcast/suggest-brief';
-import { suggestBrief as suggestFactBrief } from '../modules/fact/suggest-brief';
 import { LocalDriveStorageProvider } from '../storage/local-drive.provider';
 import {
   PRIVACY_NOTE,
@@ -249,25 +244,19 @@ program
        * pictures do not exist yet - so it is given a topic and the titles the
        * channel has already used, and proposes a fact that is not a repeat.
        */
-      const suggestion =
-        videoModule.id === 'podcast'
-          ? await suggestPodcastBrief(config, logger, {
-              previewDir: libraryPaths(config.libraryDir).preview,
-              assets: { environment: (await readLibrary(libraryPaths(config.libraryDir))).environment },
-              info,
-            })
-          : await suggestFactBrief(config, logger, {
-              // The project name is the only thing anybody types before asking
-              // for a suggestion, so it is what the suggestion is steered by.
-              // The UI knows the name with its diacritics and passes it in;
-              // from a terminal there is only the id, and un-slugging it is a
-              // decent approximation - "con chuot" still reads as "con chuột"
-              // to the model.
-              topic: opts.topic?.trim() || projectId.replace(/-/gu, ' '),
-              info,
-              // What the channel has already made, so it is not a repeat.
-              alreadyCovered: await readCoveredTitles(config, projectId),
-            });
+      const suggestion = await videoModule.suggestBrief(config, logger, {
+        // The project name is the only thing anybody types before asking for a
+        // suggestion, so it is what the suggestion is steered by. The UI knows
+        // the name with its diacritics and passes it in; from a terminal there
+        // is only the id, and un-slugging it is a decent approximation - "con
+        // chuot" still reads as "con chuột" to the model.
+        topic: opts.topic?.trim() || projectId.replace(/-/gu, ' '),
+        info,
+        // What the channel has already made, so it is not a repeat. Computed
+        // for every module: the podcast ignores it, and the cost is reading a
+        // few job.json files.
+        alreadyCovered: await readCoveredTitles(config, projectId),
+      });
 
       // Merged rather than overwritten: the requested length, and anything else
       // the user already typed, must survive a suggestion.
@@ -608,6 +597,7 @@ async function uploadOne(
   logger: ReturnType<typeof createLogger>,
 ): Promise<void> {
   const paths = jobPaths(config.jobsDir, projectId);
+  await assertNotMock(paths.jobJson, projectId);
   await assertShortEnough(paths.videoMp4, opts.allowLong ?? false);
   await warnIfTokenAging(config, logger);
   const kitRaw = await readFile(path.join(paths.output, 'youtube.json'), 'utf8').catch(() => null);
@@ -862,6 +852,35 @@ async function warnIfTokenAging(
  * A landscape render is left alone: it was never going to be a Short and
  * nobody uploading one thinks it is.
  */
+/**
+ * Refuses to upload a render made with `--mock-tts`.
+ *
+ * `--mock-tts` produces silence at the right length so layout can be checked
+ * without spending a TTS call, and a silent video on a channel is the worst
+ * thing this command can do - it looks fine in the listing and is only found by
+ * a viewer. The batch command has always known this and skipped such renders;
+ * the single-project command did not, so the one path a person reaches for when
+ * they want *this* video up was the one path with no guard. The web interface's
+ * publish buttons go through here too.
+ */
+async function assertNotMock(jobJsonPath: string, projectId: string): Promise<void> {
+  const raw = await readFile(jobJsonPath, 'utf8').catch(() => null);
+  if (!raw) return;
+
+  let job: { devMock?: boolean };
+  try {
+    job = JSON.parse(raw) as { devMock?: boolean };
+  } catch {
+    return;
+  }
+  if (!job.devMock) return;
+
+  throw new Error(
+    `${projectId} was rendered with --mock-tts, so its narration is silence. Re-render it ` +
+      'without --mock-tts before uploading.',
+  );
+}
+
 async function assertShortEnough(videoPath: string, allowLong: boolean): Promise<void> {
   if (allowLong) return;
 
@@ -1142,8 +1161,8 @@ async function readCoveredTitles(config: AppConfig, exceptProjectId: string): Pr
   return titles;
 }
 
-// Commands that exist only for one pipeline. See each module's cli.ts.
-if (videoModule.id === 'podcast') registerPodcastCommands(program, loadModuleConfig, run);
-if (videoModule.id === 'fact') registerFactCommands(program, loadModuleConfig, run);
+// Commands that exist only for one pipeline. The module registers its own, so
+// adding a third does not mean remembering to add a line here.
+videoModule.registerCommands?.(program, loadModuleConfig, run);
 
 program.parseAsync(process.argv);
