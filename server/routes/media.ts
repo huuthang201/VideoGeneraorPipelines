@@ -1,9 +1,9 @@
 import path from 'node:path';
 import { Router } from 'express';
 import type { ModuleContext } from '../lib/moduleContext';
-import { jobPaths, libraryPaths, type AppConfig } from '../../src/config/env';
+import { jobPaths, type AppConfig } from '../../src/config/env';
 import { isValidProjectId } from '../lib/slug';
-import { isImageFilename, libraryPreviewPath } from './library';
+
 
 /**
  * One router per module.
@@ -28,47 +28,35 @@ const ROOT_FILES: Record<string, (jobDir: ReturnType<typeof jobPaths>) => string
 const ALTERNATE_THUMBNAIL = /^thumbnail-([2-9])\.jpg$/u;
 
 /**
- * Library previews are served from one path per module rather than from under a
- * project, because that is where they live: the same file backs every episode
- * that uses it.
+ * A filename safe to join onto a directory root.
  *
- * Registered only for the podcast module - the fact module's photographs are
- * staged into the render bundle and never previewed here.
+ * Strict rather than merely stripping `..`: this value comes from a URL, and an
+ * allowlist of what a filename may contain is the only version of this check
+ * that cannot be talked around.
  */
-  if (module.id === 'podcast') {
-    router.get('/library/environment/:filename', (req, res) => {
-      const { filename } = req.params;
-      if (!isImageFilename(filename)) return res.status(404).end();
-
-      res.sendFile(path.resolve(libraryPreviewPath(config, filename)), (err) => {
-        if (err) res.status(404).end();
-      });
-    });
-  }
+const isImageFilename = (name: string): boolean =>
+  /^[A-Za-z0-9][A-Za-z0-9._-]*\.(jpe?g|png|webp)$/u.test(name) && !name.includes('..');
 
 /**
  * One scene's photograph, by filename.
  *
  * The timeline's `background.src` points into the Remotion bundle, which is
  * deleted when the render finishes - so the picture a finished project shows
- * has to come from wherever the module actually *keeps* it. Two stores, one
- * per module, and neither is under the job directory:
+ * has to come from where the module actually *keeps* it: the shared search
+ * cache, one per module and none of them under a job directory.
  *
- *   podcast → the uploaded library's render-ready copies
- *   fact    → the shared search cache
+ * There used to be two stores, because the podcast served render-ready copies
+ * out of an uploaded library. Every module searches now, so there is one.
  *
- * The filename is checked against a strict pattern before it is joined to
- * either root: this takes a name from a URL, and `../` in one would otherwise
- * read any file the server can reach.
+ * The filename is checked against a strict pattern before it is joined to the
+ * root: this takes a name from a URL, and `../` in one would otherwise read any
+ * file the server can reach.
  */
 router.get('/:id/scene/:filename', (req, res) => {
   const { id, filename } = req.params;
   if (!isValidProjectId(id) || !isImageFilename(filename)) return res.status(404).end();
 
-  const root =
-    module.id === 'podcast'
-      ? libraryPaths(config.libraryDir).imagesFor('environment')
-      : path.join(config.stock.cacheDir, 'images');
+  const root = path.join(config.stock.cacheDir, 'images');
 
   res.sendFile(path.resolve(root, filename), (err) => {
     if (err) res.status(404).end();

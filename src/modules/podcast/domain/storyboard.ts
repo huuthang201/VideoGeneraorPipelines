@@ -20,6 +20,18 @@ import { SceneSchema } from './scene';
  */
 export const MAX_SCENES = 40;
 
+/**
+ * How many visual themes an episode declares.
+ *
+ * More than a short's two-to-four, because an episode is four to ten times
+ * longer and a picture that returns for the ninth time stops being a backdrop
+ * and starts being wallpaper. Bounded at ten because every query costs a search
+ * against a daily allowance, and because past that the model starts inventing
+ * themes rather than finding them in its own script.
+ */
+export const MIN_IMAGE_QUERIES = 4;
+export const MAX_IMAGE_QUERIES = 10;
+
 const ContentSchema = z.strictObject({
   /** One or two sentences describing the episode - the show-notes blurb. */
   summary: z.string().min(1),
@@ -31,6 +43,8 @@ const ContentSchema = z.strictObject({
    * disagrees with the scenes cannot fail an otherwise valid file.
    */
   narration: z.string().default(''),
+  /** The episode's visual themes, searched for once and shared across scenes. */
+  imageQueries: z.array(z.string().min(1)).min(MIN_IMAGE_QUERIES).max(MAX_IMAGE_QUERIES),
 });
 
 export const StoryboardSchema = z.strictObject({
@@ -50,11 +64,6 @@ export const StoryboardDraftSchema = z.strictObject({
 export type StoryboardDraft = z.infer<typeof StoryboardDraftSchema>;
 
 export { PublishMetaSchema };
-
-/** What a storyboard may reference: the backdrops in the shared library. */
-export interface AvailableAssets {
-  environment: readonly string[];
-}
 
 /**
  * How far the spoken script may fall short of the requested length before the
@@ -84,10 +93,11 @@ export const OVERRUN_TOLERANCE = 1.6;
  */
 export function checkStoryboardStructure(
   draft: StoryboardDraft,
-  available: AvailableAssets,
+
   targetWords: number | null = null,
 ): string[] {
   const scenes = draft.scenes;
+  const queries = draft.content.imageQueries;
 
   const problems = checkSceneOrder(scenes, {
     firstNotIntro: (got) => `First scene must have type "intro", got "${got}".`,
@@ -103,24 +113,38 @@ export function checkStoryboardStructure(
       );
     }
 
-    if (!available.environment.includes(scene.environment)) {
+    if (!queries.includes(scene.imageQuery)) {
       problems.push(
-        `Scene "${scene.id}" uses environment "${scene.environment}", which is not one of the ` +
-          `available backdrops: ${available.environment.join(', ')}.`,
+        `Scene "${scene.id}" uses imageQuery "${scene.imageQuery}", which is not one of the ` +
+          `queries declared in content.imageQueries: ${queries.join(' | ')}. Every scene must ` +
+          'pick one of the declared themes.',
+      );
+    }
+
+    if (/[^\u0000-\u007f]/u.test(scene.imageQuery)) {
+      problems.push(
+        `imageQuery for scene "${scene.id}" ("${scene.imageQuery}") is not plain English. Stock ` +
+          'libraries are indexed in English only.',
       );
     }
   }
 
-  // A ten minute video that shows two photographs is a slideshow of two
-  // photographs. Only checked against what the library can actually offer, so a
-  // small library is never blamed for the model's choices.
-  const distinct = new Set(scenes.map((s) => s.environment)).size;
-  const affordable = Math.min(available.environment.length, Math.ceil(scenes.length / 2));
-  if (distinct < affordable) {
+  /*
+   * A ten minute episode that shows two photographs is a slideshow of two
+   * photographs.
+   *
+   * Checked against the *themes* rather than the pictures, because two scenes
+   * on one query still get different photographs - the resolver hands each
+   * scene its own candidate from the pool. What it cannot fix is a script that
+   * declared eight themes and then used one of them for everything.
+   */
+  const usedQueries = new Set(scenes.map((s) => s.imageQuery)).size;
+  const expected = Math.min(queries.length, Math.ceil(scenes.length / 6));
+  if (usedQueries < expected) {
     problems.push(
-      `The episode uses only ${distinct} different backdrop(s) across ${scenes.length} scenes. ` +
-        `Use at least ${affordable} of the ${available.environment.length} available, so the ` +
-        'picture changes as the subject does.',
+      `The episode uses only ${usedQueries} of its ${queries.length} declared image themes ` +
+        `across ${scenes.length} scenes. Spread the scenes across at least ${expected} of them, ` +
+        'so the picture changes as the subject does.',
     );
   }
 

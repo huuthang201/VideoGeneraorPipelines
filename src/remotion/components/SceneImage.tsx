@@ -1,6 +1,7 @@
 import { AbsoluteFill, Img, staticFile, useCurrentFrame } from 'remotion';
 import type { AnimationName, ImageFit } from '../../domain/scene';
-import { computeFit, type FitBox } from '../layout/fit';
+import { computeFit, type FitBox, type FitResult } from '../layout/fit';
+import type { FrameRegion } from '../themes/theme';
 import { getImageMotion, type MotionAmplitude } from '../animations/presets';
 
 export interface SceneImageProps {
@@ -18,6 +19,12 @@ export interface SceneImageProps {
   backgroundColor: string;
   /** Theme-supplied camera travel. */
   amplitude: MotionAmplitude;
+  /**
+   * Fit the photograph into this part of the frame instead of the whole of it,
+   * with the rest left as plain background. Used for photographs shown as
+   * published - see `preservedPhotoRegion`.
+   */
+  region?: FrameRegion;
 }
 
 /**
@@ -46,6 +53,7 @@ export const SceneImage: React.FC<SceneImageProps> = ({
   frameHeight,
   backgroundColor,
   amplitude,
+  region,
 }) => {
   const frame = useCurrentFrame();
 
@@ -53,7 +61,9 @@ export const SceneImage: React.FC<SceneImageProps> = ({
   const progress = durationInFrames > 1 ? frame / (durationInFrames - 1) : 0;
   const motion = getImageMotion(animation, progress, amplitude);
 
-  const { foreground, background } = computeFit(width, height, frameWidth, frameHeight, fit);
+  const { foreground, background } = region
+    ? inRegion(computeFit(width, height, region.width, region.height, 'contain'), region)
+    : computeFit(width, height, frameWidth, frameHeight, fit);
   const url = staticFile(src);
 
   const transform = [
@@ -81,6 +91,19 @@ export const SceneImage: React.FC<SceneImageProps> = ({
     </AbsoluteFill>
   );
 };
+
+/** A fit computed for a region, moved to where that region sits in the frame. */
+function inRegion(result: FitResult, region: FrameRegion): FitResult {
+  return {
+    ...result,
+    foreground: {
+      ...result.foreground,
+      left: result.foreground.left + region.left,
+      top: result.foreground.top + region.top,
+    },
+    background: null,
+  };
+}
 
 function boxStyle(box: FitBox): React.CSSProperties {
   return {

@@ -6,9 +6,9 @@ import {
   TRANSITIONS,
 } from '../../domain/scene';
 import { MAX_IMAGE_QUERY_CHARS, MAX_NARRATION_CHARS } from './domain/scene';
-import { MAX_IMAGE_QUERIES, MAX_SCENES, MIN_IMAGE_QUERIES } from './domain/storyboard';
+import { MAX_IMAGE_QUERIES, MIN_IMAGE_QUERIES, lengthBandFrom } from './domain/storyboard';
 import { STYLES } from '../../domain/config';
-import { SECONDS_PER_SCENE, targetWordsFor } from './pacing';
+import { HOOK_SECONDS, hookWordsFor, sceneCountFor, targetWordsFor } from './pacing';
 import { VIETNAMESE_VOICES } from '../../tts/types';
 
 /**
@@ -34,43 +34,115 @@ import { VIETNAMESE_VOICES } from '../../tts/types';
  * So: this file is the machine, and `<channel>/prompts/` is the channel.
  */
 
-/** Scenes, and how many words each gets, for a video of this length. */
-export function shapeOf(targetDurationSec: number) {
+/**
+ * Scenes, and how many words each gets, for a video of this length.
+ *
+ * The opening scene is budgeted apart from the rest, because it is the one
+ * scene with a job other than "carry a share of the script". It gets three
+ * seconds and the others divide what is left - which is why `wordsPerScene` is
+ * larger than a flat division would give, and why handing the model a single
+ * average was producing an opening line that ran four and a half seconds.
+ */
+export function shapeOf(
+  targetDurationSec: number,
+  bandSec: { minSeconds: number; maxSeconds: number },
+) {
   const targetWords = targetWordsFor(targetDurationSec);
-  const sceneCount = Math.min(
-    MAX_SCENES,
-    Math.max(4, Math.round(targetDurationSec / SECONDS_PER_SCENE)),
-  );
+  const sceneCount = sceneCountFor(targetDurationSec);
+  const hookWords = hookWordsFor();
+
+  // Through `lengthBandFrom` rather than through `targetWordsFor(minSeconds)`,
+  // so the two numbers printed here are the two numbers the check computes -
+  // the same function, on the same budget.
+  const band = lengthBandFrom(targetDurationSec, bandSec.minSeconds, bandSec.maxSeconds);
+
   return {
     seconds: Math.round(targetDurationSec),
     targetWords,
+    minWords: Math.ceil(targetWords * band.shortfall),
+    maxWords: Math.floor(targetWords * band.overrun),
     sceneCount,
-    wordsPerScene: Math.round(targetWords / sceneCount),
+    hookSeconds: HOOK_SECONDS,
+    hookWords,
+    /** For the scenes after the opening one, which is budgeted separately. */
+    wordsPerScene: Math.round((targetWords - hookWords) / Math.max(1, sceneCount - 1)),
   };
 }
 
 export interface PromptShape {
   seconds: number;
   targetWords: number;
+  minWords: number;
+  maxWords: number;
   sceneCount: number;
+  hookSeconds: number;
+  hookWords: number;
   wordsPerScene: number;
 }
 
 /** The word budget, and why missing it is expensive rather than untidy. */
-export function lengthSection({ seconds, targetWords, sceneCount, wordsPerScene }: PromptShape): string[] {
+export function lengthSection(shape: PromptShape): string[] {
+  const { seconds, targetWords, minWords, maxWords } = shape;
+  const { sceneCount, hookSeconds, hookWords, wordsPerScene } = shape;
+  const rest = `${sceneCount - 1} cảnh còn lại`;
+
   return [
     `## Độ dài`,
     ``,
-    `Video này dài khoảng ${seconds} giây, tức là **khoảng ${targetWords} từ** lời đọc, tính cả`,
-    `phần chào cuối. Chia thành ${sceneCount} cảnh, mỗi cảnh khoảng ${wordsPerScene} từ.`,
+    `Video này dài **${seconds} giây**, tức là **khoảng ${targetWords} từ** lời đọc, tính cả phần`,
+    `chào cuối. Chia thành ${sceneCount} cảnh:`,
     ``,
-    `Đây là khung cứng, không phải gợi ý. Viết quá dài thì video vượt 60 giây và`,
-    `YouTube không còn coi nó là Short nữa - nghĩa là gần như không ai được đề`,
-    `xuất xem. Viết quá ngắn thì hết chỗ cho phần giải thích và video thành một`,
-    `câu nói trống rỗng. Bản nháp lệch quá khung sẽ bị trả về kèm số từ đo được.`,
+    `    cảnh 1 (hook)${' '.repeat(Math.max(1, rest.length - 13))}  ~${hookWords} từ   = ${hookSeconds} giây`,
+    `    ${rest}  ~${wordsPerScene} từ mỗi cảnh`,
+    ``,
+    `Khung này hẹp hơn bạn quen: **chỉ nhận từ ${minWords} đến ${maxWords} từ**, đếm cả video.`,
+    `Sai số giữa số từ và độ dài thật đã được đo trên hơn một trăm video và chỉ`,
+    `khoảng ba phần trăm, nên số từ bạn viết ra QUYẾT ĐỊNH độ dài video - không`,
+    `phải ước chừng. Viết xong hãy đếm lại.`,
+    ``,
+    `Ba mươi giây là một lựa chọn, không phải giới hạn kỹ thuật. Video càng ngắn`,
+    `thì tỉ lệ người xem hết càng cao, và tỉ lệ xem hết là thứ quyết định video`,
+    `có được đẩy đi tiếp hay không. Viết dài hơn không phải là cho nhiều hơn, mà`,
+    `là mất người xem ở giữa chừng.`,
     ``,
     `Cách giữ đúng độ dài là cắt chứ không phải nói nhanh: bỏ câu dẫn, bỏ tính từ`,
-    `thừa, bỏ mọi câu không thêm thông tin mới.`,
+    `thừa, bỏ mọi câu không thêm thông tin mới. Ba mươi giây chỉ đủ cho MỘT ý -`,
+    `một điều lạ và lời giải thích của nó. Hai ý thì cả hai đều hụt.`,
+    ``,
+  ];
+}
+
+/**
+ * The opening three seconds, as a mechanism rather than as advice.
+ *
+ * What is in here is true of the format on every channel built on this
+ * machinery: the length of the window, the fact that an impact is laid under it
+ * automatically, and that most viewers are reading rather than listening. What
+ * makes a *good* opening line is subject matter, and stays in the channel's own
+ * prompt - a fact channel opens by stating something strange, this one opens by
+ * describing a moment the viewer has lived through, and neither belongs here.
+ */
+export function hookSection({ hookSeconds, hookWords }: PromptShape): string[] {
+  return [
+    `## Ba giây đầu tiên`,
+    ``,
+    `Cảnh đầu tiên là **${hookSeconds} giây, khoảng ${hookWords} từ**, và nó quyết định video này có`,
+    `được xem hay không. Đây là ràng buộc cứng: bản nháp có cảnh mở dài hơn sẽ bị`,
+    `trả về.`,
+    ``,
+    `Ba giây là MỘT câu. Không phải một câu rồi một câu nữa - một câu, đọc lên là`,
+    `hết thời gian. Vì vậy câu đó phải tự nó đã đủ gây sốc để người ta dừng tay:`,
+    `nó nêu thẳng điều bất thường, không dẫn dắt, không chào hỏi, không hỏi tu từ.`,
+    ``,
+    `Phép thử: nếu cắt bỏ toàn bộ video chỉ giữ câu đầu, người xem vẫn phải giật`,
+    `mình. Nếu câu đầu chỉ khiến người ta *chờ xem tiếp có gì* thì nó chưa phải`,
+    `hook, nó là lời mở đầu - và người xem không chờ.`,
+    ``,
+    `Và nhớ rằng **rất nhiều người xem đang tắt tiếng**. Câu mở sẽ hiện thành phụ`,
+    `đề, nên nó phải đọc bằng mắt cũng hiểu ngay - đừng để ý chính nằm ở vế sau`,
+    `của một câu dài.`,
+    ``,
+    `Phần giải thích, bối cảnh, "vì sao lại thế" - tất cả đẩy sang cảnh thứ hai.`,
     ``,
   ];
 }
@@ -221,14 +293,15 @@ export function voiceMechanicsSection(): string[] {
 }
 
 /** The eight fields a scene carries, and what each is for. */
-export function sceneFieldsSection({ wordsPerScene }: PromptShape): string[] {
+export function sceneFieldsSection({ hookWords, wordsPerScene }: PromptShape): string[] {
   return [
     `## Từng cảnh`,
     ``,
     `Mỗi cảnh là một ảnh nền cộng một đoạn lời đọc ngắn. Bạn quyết định:`,
     ``,
     `1. "narration" - phần lời đọc rơi vào cảnh này. Khoảng ${wordsPerScene} từ, tối đa`,
-    `   ${MAX_NARRATION_CHARS} ký tự.`,
+    `   ${MAX_NARRATION_CHARS} ký tự - trừ cảnh mở đầu, cảnh đó chỉ khoảng ${hookWords} từ (xem mục`,
+    `   "Ba giây đầu tiên").`,
     ``,
     `   Hãy hiểu đúng chỗ này: lời đọc là MỘT mạch văn duy nhất, và các cảnh chỉ`,
     `   là chỗ bạn cắt mạch văn đó ra để đổi hình. Cảnh KHÔNG cần kết thúc trọn`,
@@ -296,6 +369,106 @@ export function validValuesSection(defaultStyle: string, defaultVoice: string): 
     `  độ là thiết lập hệ thống, không phải của bạn: bỏ hẳn "rate" và "pitch".)`,
     ``,
     `Chỉ dùng những giá trị này. Không tự nghĩ ra giá trị mới.`,
+    ``,
+  ];
+}
+
+/**
+ * A channel's own examples of a title that withholds and one that does not.
+ *
+ * The rule is shared, the examples cannot be: "Cái áo hai triệu tự nhiên thành
+ * rẻ" withholds nothing on a fact channel and everything on a psychology one,
+ * because what counts as the answer depends on what the video was going to
+ * tell you.
+ */
+export interface PublishExamples {
+  /** Two or three titles that create the gap without lying. */
+  withholding: string[];
+  /** Titles that give the answer away, each with what it spent. */
+  givingAway: string[];
+  /** Broad tags for this channel, then narrow ones for one video. */
+  broadTags: string[];
+  narrowTags: string[];
+}
+
+/**
+ * How the video is packaged for YouTube, and why the title holds something
+ * back.
+ *
+ * Everything mechanical in here is a property of the surface rather than of a
+ * channel: a Short's title is cut around sixty characters, the system appends
+ * the chapters, the music credit and `#shorts` itself, and a description is the
+ * one place a viewer can read the answer without watching again.
+ *
+ * The editorial half - the *rule* that the title withholds - is shared too, and
+ * that is a deliberate call rather than an oversight. It is not a matter of
+ * taste on which the two channels could reasonably differ; it follows from the
+ * format. A thirty second video whose title contains its own payoff has already
+ * been consumed in the feed, and the view it loses is the one that would have
+ * watched to the end. What genuinely differs is what "the answer" *is*, and
+ * that arrives as examples.
+ *
+ * The distinction the section spends most of its words on is between
+ * withholding and clickbait, because a model told to be intriguing reaches
+ * straight for "99% KHÔNG BIẾT". A gap built on a real, specific strangeness is
+ * not the same thing as one built on a claim about the audience.
+ */
+export function publishSection(examples: PublishExamples): string[] {
+  return [
+    `## Phần đăng YouTube`,
+    ``,
+    `Video được đăng dưới dạng YouTube Short, nên viết luôn phần đăng - một object`,
+    `"publish" gồm "title", "description" và "tags". Tất cả bằng tiếng Việt.`,
+    ``,
+    `### Tiêu đề giữ lại phần trả lời`,
+    ``,
+    `Đây là quy tắc quan trọng nhất của mục này, và nó ngược với thói quen thông`,
+    `thường. **Tiêu đề nêu ra điều lạ, nhưng KHÔNG nói ra lời giải thích.** Phần`,
+    `giải thích nằm trong video, và nằm trong mô tả.`,
+    ``,
+    `Lý do rất cụ thể: người ta đọc tiêu đề ngay trên khung video đang lướt. Nếu`,
+    `tiêu đề đã chứa luôn câu trả lời thì họ đã "xem xong" video mà không cần xem`,
+    `- và lượt xem bị mất chính là lượt lẽ ra xem đến hết.`,
+    ``,
+    `Giữ lại được:`,
+    ...examples.withholding.map((t) => `    "${t}"`),
+    ``,
+    `Nói toẹt ra mất rồi:`,
+    ...examples.givingAway.map((t) => `    ${t}`),
+    ``,
+    `### Nhưng giữ lại KHÔNG phải là câu view`,
+    ``,
+    `Hai thứ này rất dễ nhầm, và nhầm thì hỏng kênh. Khác nhau ở chỗ:`,
+    ``,
+    `- **Giữ lại** là nêu một điều CỤ THỂ và có thật, rồi dừng trước phần vì sao.`,
+    `  Người đọc biết chính xác video nói về cái gì, chỉ chưa biết đáp án.`,
+    `- **Câu view** là không nêu gì cả, chỉ hứa hẹn về người xem hoặc về mức độ`,
+    `  gây sốc: "99% KHÔNG BIẾT", "SỰ THẬT GÂY SỐC", "BẠN SẼ KHÔNG TIN NỔI",`,
+    `  "XEM ĐẾN CUỐI ĐI". Những cái đó không nêu điều gì cả, và người xem đã học`,
+    `  được rằng đằng sau chúng thường chẳng có gì.`,
+    ``,
+    `Phép thử: đọc tiêu đề lên, có trả lời được "video này nói về cái gì?" không?`,
+    `Nếu không thì đó là câu view, viết lại. Nếu có mà trả lời được luôn "và tại`,
+    `sao?" thì đã nói toẹt, cũng viết lại.`,
+    ``,
+    `### Ba trường`,
+    ``,
+    `- **title**: tối đa 100 ký tự, nhưng trên khung Short người xem chỉ thấy`,
+    `  khoảng 60 ký tự đầu - nên ý chính phải nằm trong 60 ký tự đầu. Không viết`,
+    `  hoa toàn bộ, không emoji, không dấu chấm than.`,
+    `- **description**: đây là chỗ nói hết. Hai đến bốn câu: câu đầu nhắc lại`,
+    `  điều lạ, rồi **trả lời luôn** phần mà tiêu đề giữ lại, rồi thêm một chi`,
+    `  tiết không có trong video thì càng tốt. Người đọc mô tả là người đã xem`,
+    `  hoặc đang cân nhắc xem - giấu họ nữa là vô nghĩa.`,
+    ``,
+    `  KHÔNG viết danh sách chương và KHÔNG viết dòng ghi nguồn nhạc - hệ thống`,
+    `  tự sinh cả hai, kèm thẻ #shorts.`,
+    `- **tags**: năm đến mười hai thẻ, chữ thường, là những từ người ta thực sự`,
+    `  gõ tìm. Trộn thẻ rộng (${examples.broadTags.map((t) => `"${t}"`).join(', ')}) với thẻ riêng của`,
+    `  video này (${examples.narrowTags.map((t) => `"${t}"`).join(', ')}).`,
+    ``,
+    `  Thẻ thì ngược với tiêu đề: ở đây cứ nói thẳng, vì đây là chỗ máy đọc chứ`,
+    `  không phải người.`,
     ``,
   ];
 }

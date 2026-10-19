@@ -1,91 +1,57 @@
 import type { Command } from 'commander';
 import type { AppConfig } from '../../config/env';
-import { libraryPaths } from '../../config/env';
-import type { Logger } from '../../utils/logger';
-import { createLogger } from '../../utils/logger';
-import { COMFORTABLE_ENVIRONMENTS } from '../../domain/project';
-import {
-  importIntoLibrary,
-  readLibrary,
-  removeFromLibrary,
-} from './image/library';
+import { createLogger, type Logger } from '../../utils/logger';
+import { OpenverseProvider } from '../shorts/image/stock/openverse.provider';
+import { MIN_IMAGE_EDGE } from '../shorts/image/stock/resolve';
 
 /**
  * The podcast module's own CLI commands.
  *
- * Registered only when the CLI is running as this module - see `--module` in
- * `src/cli/index.ts`. Genuinely absent rather than hidden under the other
- * module: there is no library there to list.
+ * This file used to manage the shared backdrop library: add, list, remove.
+ * There is no library any more - episodes are shot against photographs the
+ * engine searches for - so what is useful here is the same thing that is
+ * useful to the other modules: seeing what a phrase would find before a render
+ * is spent on it.
  */
 export function registerPodcastCommands(
   program: Command,
   loadModuleConfig: () => AppConfig,
   run: (fn: () => Promise<void>, logger: Logger) => Promise<void>,
 ): void {
-  /**
-   * The shared backdrop library.
-   *
-   * Deliberately a separate noun from a project: these photographs belong to the
-   * system, and every episode draws from them. Uploading one makes it available
-   * to every project at once.
-   */
-  const library = program
-    .command('library')
-    .description('Manage the shared backdrop images');
-
-  library
-    .command('add-environments')
-    .argument('<source>', 'folder of backdrop images')
-    .description('Import backdrops into the shared library (additive)')
-    .action(async (source: string) => {
+  program
+    .command('stock-search')
+    .argument('<query>', 'search phrase, in English')
+    .option('--limit <n>', 'how many results to show', (v) => Number.parseInt(v, 10), 8)
+    .description('Show the photographs a scene query would find (no download, no render)')
+    .action(async (query: string, opts: { limit: number }) => {
       const config = loadModuleConfig();
       const logger = createLogger({ level: config.logLevel });
 
       await run(async () => {
-        const result = await importIntoLibrary({
-          paths: libraryPaths(config.libraryDir),
-          sourceDir: source,
-          onWarn: (message) => logger.warn(message),
+        const provider = new OpenverseProvider(config.stock.token, config.stock.sources, {
+          shareAlike: config.stock.allowShareAlike,
         });
-        logger.done(
-          `Imported ${result.imported.length} backdrop(s); library now holds ` +
-            `${result.library.counts.environment}`,
-        );
-      }, logger);
-    });
+        const results = await provider.search({
+          query,
+          limit: opts.limit,
+          minEdge: MIN_IMAGE_EDGE,
+        });
 
-  library
-    .command('list')
-    .description('Show the backdrops in the shared library')
-    .action(async () => {
-      const config = loadModuleConfig();
-      const contents = await readLibrary(libraryPaths(config.libraryDir));
+        if (results.length === 0) {
+          logger.warn(
+            `Nothing usable for "${query}". Every result was under ${MIN_IMAGE_EDGE}px or carried ` +
+              'a licence this tool will not publish. Try fewer, more concrete words.',
+          );
+          return;
+        }
 
-      console.log(`backdrops (${contents.environment.length}):`);
-      for (const filename of contents.environment) console.log(`  ${filename}`);
-
-      if (!contents.ready) {
-        console.log('\nNot ready: the library needs at least one backdrop.');
-        process.exitCode = 1;
-      } else if (contents.counts.environment < COMFORTABLE_ENVIRONMENTS) {
-        console.log(
-          `\nOnly ${contents.counts.environment} backdrop(s). A 5-10 minute episode looks better ` +
-            `with ${COMFORTABLE_ENVIRONMENTS} or more.`,
-        );
-      }
-    });
-
-  library
-    .command('remove-environment')
-    .argument('<filename>', 'backdrop filename, as shown by "library list"')
-    .description('Delete one backdrop')
-    .action(async (filename: string) => {
-      const config = loadModuleConfig();
-      const logger = createLogger({ level: config.logLevel });
-
-      await run(async () => {
-        const contents = await removeFromLibrary(libraryPaths(config.libraryDir), filename);
-        logger.done(`Removed ${filename}; ${contents.counts.environment} backdrop(s) left`);
+        for (const image of results) {
+          console.log(
+            `${String(image.width).padStart(5)}x${String(image.height).padEnd(5)} ` +
+              `${image.license.padEnd(4)} ${image.creator.slice(0, 28).padEnd(28)} ${image.sourceUrl}`,
+          );
+        }
+        logger.done(`${results.length} usable result(s) for "${query}"`);
       }, logger);
     });
 }

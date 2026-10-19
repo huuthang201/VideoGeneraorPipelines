@@ -3,7 +3,7 @@ import { buildStoryboardPrompt } from './prompts/generate-storyboard';
 import { buildSuggestBriefPrompt } from './prompts/suggest-brief';
 
 /**
- * Fact Shorts: one true thing, told in forty-five seconds.
+ * Fact Shorts: one true thing, told in thirty seconds.
  *
  * Everything mechanical lives in `../shorts` and is shared with every other
  * vertical Vietnamese channel in this repo. What is left here is the only thing
@@ -12,6 +12,6 @@ import { buildSuggestBriefPrompt } from './prompts/suggest-brief';
 export const factModule = makeShortsModule({
   id: 'fact',
   label: 'Fact Shorts',
-  description: 'Vietnamese fact shorts, 30-60s, 9:16, photographs searched automatically',
+  description: 'Vietnamese fact shorts, 28-32s, 9:16, photographs searched automatically',
   prompts: { buildStoryboardPrompt, buildSuggestBriefPrompt },
 });

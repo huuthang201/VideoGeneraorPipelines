@@ -7,7 +7,7 @@ import type { ModuleId } from '../../src/domain/config';
 import type { JobStatus } from '../../src/domain/job';
 import { configFor } from './moduleContext';
 import { readProjectSummary } from './projectStatus';
-import { readProjectMeta } from './projectMeta';
+import { PENDING_TOPIC_NAME, readProjectMeta, writeProjectMeta } from './projectMeta';
 import { runCli, spawnCli } from './processRunner';
 import {
   STEP_BY_STAGE,
@@ -562,6 +562,70 @@ async function emitRunState(module: ModuleId, projectId: string): Promise<void> 
 }
 
 /**
+ * How much of a hook survives as a project name.
+ *
+ * Long enough to say what the video is, short enough for a card in a grid two
+ * hundred pixels wide. Cut at a word boundary, because a name that stops
+ * mid-syllable in Vietnamese reads as a bug rather than as a truncation.
+ */
+const NAME_FROM_HOOK_CHARS = 64;
+
+function nameFromHook(hook: string): string | null {
+  const line = hook.trim().replace(/\s+/gu, ' ').replace(/[.!?…]+$/u, '');
+  if (!line) return null;
+  if (line.length <= NAME_FROM_HOOK_CHARS) return line;
+
+  const cut = line.slice(0, NAME_FROM_HOOK_CHARS);
+
+  /*
+   * A clause boundary first, a word boundary only as a fallback.
+   *
+   * A hook is one long sentence built out of commas, so cutting it purely by
+   * length lands mid-thought: "Sáng nay bạn vừa lấy chiếc xe mới từ cửa hàng,
+   * và trên đường…" - which trails off exactly where the sentence was about to
+   * become interesting. Ending at the comma gives "Sáng nay bạn vừa lấy chiếc
+   * xe mới từ cửa hàng", a phrase that stands on its own and reads as a title
+   * rather than as a sentence someone stepped on.
+   */
+  const clause = Math.max(cut.lastIndexOf(', '), cut.lastIndexOf(' - '), cut.lastIndexOf(' — '));
+  if (clause > NAME_FROM_HOOK_CHARS / 2) return cut.slice(0, clause).trim();
+
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > 20 ? cut.slice(0, lastSpace) : cut).trim()}…`;
+}
+
+/**
+ * Names a still-unnamed project after the subject Claude just chose.
+ *
+ * Only for a project created without one: the check is that the display name
+ * is still the placeholder, so a project somebody named is never renamed
+ * underneath them - the same rule as the brief itself, which is drafted when
+ * missing and never overwritten.
+ *
+ * The name comes from the hook rather than the context. The hook is already
+ * one short sentence written to be read at a glance, which is what a card in a
+ * grid needs; the context is two or three sentences of reasoning.
+ */
+async function nameAfterTopic(module: ModuleId, projectId: string): Promise<void> {
+  const paths = jobPaths(configFor(module).jobsDir, projectId);
+  const meta = await readProjectMeta(paths.root, projectId).catch(() => null);
+  if (meta?.displayName !== PENDING_TOPIC_NAME) return;
+
+  const raw = await readFile(paths.briefJson, 'utf8').catch(() => null);
+  if (!raw) return;
+
+  let hook: string | undefined;
+  try {
+    hook = (JSON.parse(raw) as { hook?: string }).hook;
+  } catch {
+    return;
+  }
+
+  const name = hook ? nameFromHook(hook) : null;
+  if (name) await writeProjectMeta(paths.root, { ...meta, displayName: name });
+}
+
+/**
  * The whole pipeline, start to finish, from one button.
  *
  * The steps are exactly the ones already available separately - this adds no
@@ -651,6 +715,7 @@ export async function runAuto(
         );
       }
       patchLive(module, projectId, { details: { brief: 'Claude tự nghĩ đề tài' } });
+      await nameAfterTopic(module, projectId);
     }
 
     // ---- 2. Everything the engine does ------------------------------------

@@ -162,7 +162,7 @@ function stepWord(id: string): string {
   const words: Record<string, string> = {
     brief: 'Đang nghĩ đề tài',
     storyboard: 'Đang viết kịch bản',
-    images: isPodcast() ? 'Đang lấy ảnh' : 'Đang tìm ảnh',
+    images: 'Đang tìm ảnh',
     voice: 'Đang đọc',
     render: 'Đang dựng',
     check: 'Đang kiểm tra',

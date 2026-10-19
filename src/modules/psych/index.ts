@@ -13,6 +13,6 @@ import { buildSuggestBriefPrompt } from './prompts/suggest-brief';
 export const psychModule = makeShortsModule({
   id: 'psych',
   label: 'Não Có Vấn Đề',
-  description: 'Vietnamese psychology shorts, 30-60s, 9:16, photographs searched automatically',
+  description: 'Vietnamese psychology shorts, 28-32s, 9:16, photographs searched automatically',
   prompts: { buildStoryboardPrompt, buildSuggestBriefPrompt },
 });

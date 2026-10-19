@@ -1,6 +1,6 @@
 # Auto Fact Shorts Generator
 
-Turns a sentence about a fact into a 30-60 second 9:16 MP4 with Vietnamese
+Turns a sentence about a fact into a 28-32 second 9:16 MP4 with Vietnamese
 narration — read by a northern Vietnamese man, shot against photographs the
 engine finds itself, built to be published to YouTube Shorts on a
 fixed schedule.

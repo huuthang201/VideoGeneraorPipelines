@@ -20,6 +20,8 @@ tmp/
 .env.podcast
 .env.fact
 .env.psych
+.env.factlong
+.env.cartoon
 
 # runtime artifacts (jobs, cache, temp, logs)
 runtime/

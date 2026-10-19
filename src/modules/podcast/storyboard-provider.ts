@@ -2,7 +2,6 @@ import path from 'node:path';
 import {
   StoryboardDraftSchema,
   checkStoryboardStructure,
-  type AvailableAssets,
   type Storyboard,
   type StoryboardDraft,
 } from './domain/storyboard';
@@ -13,6 +12,7 @@ import type { AppConfig } from '../../config/env';
 import type { Logger } from '../../utils/logger';
 import { callClaude, extractJson } from '../../ai/claude-runner';
 import { checkFacts } from '../../ai/fact-guard';
+import { findSimilarTopic } from '../../pipeline/topic-ledger';
 import { factGuardLanguage } from './fact-guard-lang';
 import { buildRetryPrompt, buildStoryboardPrompt, targetWordsFor } from './prompts/generate-storyboard';
 import { languageOf } from '../../tts/types';
@@ -43,15 +43,8 @@ const MAX_ATTEMPTS = 3;
  */
 const CLAUDE_TIMEOUT_MS = 900_000;
 
-export interface PodcastGenerateInput extends GenerateStoryboardInput<Brief> {
-  /** What the storyboard may reference: the backdrops in the library. */
-  assets: AvailableAssets;
-  /** The shared library's preview root - holds one sub-folder per kind. */
-  previewDir: string;
-}
-
 export async function generateStoryboard(
-  input: PodcastGenerateInput,
+  input: GenerateStoryboardInput<Brief>,
   config: AppConfig,
   logger: Logger,
 ): Promise<Storyboard> {
@@ -59,8 +52,6 @@ export async function generateStoryboard(
     projectId: input.projectId,
     workingTitle: input.info?.name ?? input.projectId,
     info: input.info,
-    assets: input.assets,
-    previewDir: path.resolve(input.previewDir),
     targetDurationSec: input.targetDurationSec,
     defaultStyle: config.video.style,
     defaultVoice: config.tts.voice,
@@ -69,9 +60,16 @@ export async function generateStoryboard(
 
   const targetWords = targetWordsFor(input.targetDurationSec);
 
-  // Read, scoped to the previews and nothing else. The model needs to look at
-  // the photographs; it has no reason to see the rest of the filesystem.
-  const extraArgs = ['Read', '--add-dir', path.resolve(input.previewDir)];
+  /*
+   * No tools at all now.
+   *
+   * This call used to be granted `Read` over the library previews, because the
+   * model had to look at the photographs before it could choose a subject.
+   * There is no library to look at any more - the script names what it wants
+   * and the engine searches for it afterwards - so the call is text in, text
+   * out, like every other prompt in the repository except the cartoon one.
+   */
+  const extraArgs: string[] = [];
 
   let prompt = basePrompt;
   let lastProblem = 'unknown';
@@ -101,11 +99,31 @@ export async function generateStoryboard(
       continue;
     }
 
-    const structural = checkStoryboardStructure(parsed.data, input.assets, targetWords);
+    const structural = checkStoryboardStructure(parsed.data, targetWords);
     if (structural.length > 0) {
       lastProblem = structural.map((p) => `- ${p}`).join('\n');
       logger.warn(`Storyboard failed structural checks:\n${lastProblem}`);
       prompt = buildRetryPrompt(basePrompt, `Structural problems:\n${lastProblem}`);
+      continue;
+    }
+
+    /*
+     * The duplicate gate.
+     *
+     * Last of the checks and deliberately so: it is the only one that needs to
+     * know about episodes other than this one, and there is no point asking
+     * whether a script repeats itself before knowing it is a valid script at
+     * all. Fed back like every other violation, so the model rewrites rather
+     * than the run dying.
+     */
+    const repeat = findSimilarTopic(parsed.data.project.episodeTitle, input.alreadyCovered);
+    if (repeat) {
+      lastProblem =
+        `The subject "${parsed.data.project.episodeTitle}" repeats an episode this channel has ` +
+        `already made: "${repeat}". Choose a genuinely different subject rather than rewording ` +
+        'the same one.';
+      logger.warn(lastProblem);
+      prompt = buildRetryPrompt(basePrompt, lastProblem);
       continue;
     }
 
@@ -164,6 +182,7 @@ function toStoryboard(
     content: {
       summary: draft.content.summary,
       narration: narrationFromScenes(draft),
+      imageQueries: draft.content.imageQueries,
     },
     publish: draft.publish,
     scenes: draft.scenes,

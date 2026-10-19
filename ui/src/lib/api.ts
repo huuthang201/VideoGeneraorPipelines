@@ -7,20 +7,18 @@
  * fail rather than guess. The server agrees: `/api/projects` is a 404.
  */
 
-export type ModuleId = 'podcast' | 'fact' | 'psych';
+export type ModuleId = 'podcast' | 'fact' | 'psych' | 'cartoon' | 'factlong';
 
 export const MODULE: ModuleId =
   (new URLSearchParams(location.search).get('m') as ModuleId | null) ?? 'fact';
 
 /**
- * The one shape question the interface asks.
+ * The one shape question the interface asks: is this frame landscape?
  *
- * Not `MODULE === 'fact'` anywhere, deliberately. What the screen actually
- * branches on is whether pictures come from a library somebody uploaded or are
- * searched for at render time - and that is true of the podcast and false of
- * every vertical channel, present and future. Written the other way round,
- * adding this third module would have meant hunting every `=== 'fact'` in the
- * interface and hoping none was missed.
+ * It used to mean "does this module have an uploaded library", which was the
+ * podcast and nothing else. Every module searches for its photographs now, so
+ * the only thing left that the podcast does differently on screen is its
+ * aspect ratio - the card thumbnails are 16:9 rather than 9:16.
  */
 export const isPodcast = () => MODULE === 'podcast';
 
@@ -104,7 +102,10 @@ export interface BriefData {
   context?: string;
   hook?: string;
   targetMinutes?: number;
-  targetSeconds?: number;
+  targetSeconds?: number;  /** Links found in the context. Written by the server, never by the interface. */
+  sources?: string[];
+  /** The channel owner has the papers' permission to use their photographs. */
+  sourceImagesPermitted?: boolean;
 }
 
 export interface StoryboardData {
@@ -209,18 +210,15 @@ export interface ProjectSummary {
   autoPublish: 'none' | 'now' | 'schedule';
 }
 
-export interface LibraryIndex {
-  environment: string[];
-  counts: { environment: number };
-  ready: boolean;
-}
 
 export interface Brief {
   context?: string;
   hook?: string;
   targetMinutes?: number;
-  targetSeconds?: number;
-  environments?: string[];
+  targetSeconds?: number;  /** Links found in the context. Written by the server, never by the interface. */
+  sources?: string[];
+  /** The channel owner has the papers' permission to use their photographs. */
+  sourceImagesPermitted?: boolean;
 }
 
 export interface StoryboardScene {
@@ -243,7 +241,6 @@ export interface ProjectDetail extends ProjectSummary {
   brief: Brief | null;
   storyboard: Storyboard | null;
   versions: { filename: string; createdAt: string }[];
-  library?: LibraryIndex;
   defaultTargetSeconds?: number;
   publish: { title: string; description: string; tags: string[]; thumbnails?: string[] } | null;
   upload: { videoId?: string; url?: string; privacyStatus?: string; thumbnailError?: string } | null;

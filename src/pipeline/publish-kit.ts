@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import type { StoryboardLike } from '../modules/contract';
 import type { ModuleId } from '../domain/config';
 import type { Timeline } from '../domain/timeline';
-import { requiresAttribution } from '../image/credit';
+import { mustPreserveOriginal, requiresAttribution } from '../image/credit';
 
 type Storyboard = StoryboardLike;
 
@@ -37,7 +37,14 @@ export interface PublishKit {
   thumbnails: string[];
   music: MusicCredit | null;
   /** One line per distinct photograph, in the order they appear. */
-  images: { creator: string; license: string; licenseUrl: string; sourceUrl: string }[];
+  images: {
+    creator: string;
+    /** Where it came from: the stock library, or the paper for a press photograph. */
+    provider?: string;
+    license: string;
+    licenseUrl: string;
+    sourceUrl: string;
+  }[];
 }
 
 /**
@@ -76,7 +83,17 @@ const MIN_CHAPTERABLE_SECONDS = 120;
 const BASE_HASHTAGS_BY_MODULE: Record<ModuleId, string[]> = {
   fact: ['shorts'],
   psych: ['shorts'],
+  cartoon: ['shorts'],
   podcast: [],
+  /**
+   * Empty, unlike the shorts on the same channel.
+   *
+   * `#shorts` is what tells YouTube to serve a video in the Shorts feed, and a
+   * seventeen-minute landscape video tagged with it is not eligible - the tag
+   * is at best ignored and at worst a signal the channel does not know what it
+   * is uploading.
+   */
+  factlong: [],
 };
 
 /**
@@ -149,19 +166,12 @@ export function buildPublishKit(input: {
    * there. So this lists the CC BY ones, which do - and `youtube.md` keeps the
    * complete record for whoever needs it.
    */
-  const mustCredit = images.filter((image) => requiresAttribution(image.license));
-
-  if (mustCredit.length > 0) {
-    sections.push(
-      [
-        'Ảnh',
-        ...mustCredit.map(
-          (image) =>
-            `${image.creator} — CC ${image.license.toUpperCase()} (${image.licenseUrl}) ${image.sourceUrl}`,
-        ),
-      ].join('\n'),
-    );
-  }
+  const mustCredit = images.filter(
+    (image) => requiresAttribution(image.license) && !mustPreserveOriginal(image.license),
+  );
+  const pressCredits = images.filter((image) => mustPreserveOriginal(image.license));
+  if (pressCredits.length > 0) sections.push(pressCreditSection(pressCredits));
+  if (mustCredit.length > 0) sections.push(creditSection(mustCredit));
 
   if (input.music) {
     // The credit is generated rather than written by the model because it is a
@@ -190,7 +200,7 @@ export function buildPublishKit(input: {
 
   return {
     title,
-    description: sections.filter(Boolean).join('\n\n'),
+    description: fitDescription(sections.filter(Boolean), mustCredit),
     tags,
     chapters,
     thumbnails: input.thumbnails,
@@ -200,23 +210,178 @@ export function buildPublishKit(input: {
 }
 
 /**
+ * How long a YouTube description may be.
+ *
+ * Five thousand characters, and it is a hard refusal rather than a truncation:
+ * `videos.insert` answers 400 `invalidDescription` and uploads nothing. The
+ * margin is for the hashtag line and the newlines between sections, which are
+ * cheaper to over-reserve than to count exactly.
+ */
+const MAX_DESCRIPTION_CHARS = 4900;
+
+/** The first line of the Creative Commons credits, which `fitDescription` finds them by. */
+const CC_HEADING = 'Ảnh';
+
+/**
+ * Press photographs, one line per article.
+ *
+ * Not the Creative Commons form, and not only because "CC PERMISSION" would be
+ * nonsense. What a paper that said yes will look for is its own name, the
+ * photographer's, and a link back to the story - the form Vietnamese papers use
+ * for each other's pictures. One line per article rather than per photograph,
+ * because six photographs from one story are one permission.
+ *
+ * It never shrinks. There are at most a dozen articles, and this is the credit
+ * the permission was given on - the CC credits below it give way first.
+ */
+function pressCreditSection(images: PublishKit['images']): string {
+  const byArticle = new Map<string, { outlet: string; photographers: string[] }>();
+
+  for (const image of images) {
+    const outlet = image.provider ?? image.creator;
+    const entry = byArticle.get(image.sourceUrl) ?? { outlet, photographers: [] };
+    if (image.creator !== outlet && !entry.photographers.includes(image.creator)) {
+      entry.photographers.push(image.creator);
+    }
+    byArticle.set(image.sourceUrl, entry);
+  }
+
+  return [
+    'Ảnh báo chí - sử dụng với sự cho phép của toà soạn',
+    ...[...byArticle].map(([url, { outlet, photographers }]) =>
+      photographers.length > 0
+        ? `${outlet} (ảnh: ${photographers.join(', ')}): ${url}`
+        : `${outlet}: ${url}`,
+    ),
+  ].join('\n');
+}
+
+/**
+ * The photo credits, at the most detailed level that fits.
+ *
+ * This exists because a length that was theoretical for two years stopped
+ * being. A thirty-second short shows six photographs and its credits run to
+ * eight hundred characters; a seventeen-minute video shows ninety-one, and the
+ * first one written came to **nine thousand one hundred** - YouTube refused the
+ * upload outright with `invalidDescription`, after the render, the narration
+ * and the whole research pass had been paid for.
+ *
+ * The obligation cannot simply be trimmed away: CC BY asks for the creator, the
+ * licence, and the work's URI where one was supplied. So instead of dropping
+ * credits the section is written three ways and the fullest one that fits is
+ * used:
+ *
+ *   1. one line per photograph, with its own link - what a short gets
+ *   2. one line per *creator*, their photographs' links gathered - the licence
+ *      URL moves to a single legend, which alone saves forty-five characters a
+ *      line
+ *   3. creators named, links dropped, with the video's own frames pointed at
+ *
+ * Level three still names every photographer and still names the licence, and
+ * the per-frame credit drawn in the corner of the video carries the rest - so
+ * the obligation survives even at the smallest size. It is a fallback for a
+ * video with two hundred distinct photographs, not something a normal one
+ * reaches.
+ */
+function creditSection(images: PublishKit['images']): string {
+  return [
+    CC_HEADING,
+    ...images.map(
+      (image) =>
+        `${image.creator} — CC ${image.license.toUpperCase()} (${image.licenseUrl}) ${image.sourceUrl}`,
+    ),
+  ].join('\n');
+}
+
+/** The same credits, one line per creator and the licence stated once. */
+function creditSectionGrouped(images: PublishKit['images']): string {
+  const byCreator = new Map<string, string[]>();
+  for (const image of images) {
+    const urls = byCreator.get(image.creator) ?? [];
+    if (!urls.includes(image.sourceUrl)) urls.push(image.sourceUrl);
+    byCreator.set(image.creator, urls);
+  }
+
+  const licences = [...new Set(images.map((i) => i.licenseUrl))].sort();
+  return [
+    'Ảnh — Creative Commons',
+    ...licences.map((url) => url),
+    '',
+    ...[...byCreator].map(([creator, urls]) => `${creator}: ${urls.join(' , ')}`),
+  ].join('\n');
+}
+
+/** Creators and licence only; the per-frame credit in the video carries the rest. */
+function creditSectionNamesOnly(images: PublishKit['images']): string {
+  const creators = [...new Set(images.map((i) => i.creator))].sort();
+  const licences = [...new Set(images.map((i) => i.licenseUrl))].sort();
+
+  return [
+    'Ảnh — Creative Commons, tác giả theo thứ tự chữ cái:',
+    creators.join(' · '),
+    '',
+    `Giấy phép: ${licences.join(' , ')}`,
+    'Từng bức ảnh được ghi tên tác giả ngay trên khung hình trong video.',
+  ].join('\n');
+}
+
+/**
+ * Assembles the description, shrinking only the credits until it fits.
+ *
+ * The credits are the only part that scales with the video's length, so they
+ * are the only part that gives - the summary, the chapters and the music credit
+ * are the same size on a short and on a documentary. A video that does not fit
+ * even at the smallest level has a problem this function cannot solve, and it
+ * says so in the description rather than letting YouTube refuse the upload.
+ */
+function fitDescription(sections: string[], credits: PublishKit['images']): string {
+  const join = (parts: string[]) => parts.filter(Boolean).join('\n\n');
+
+  const full = join(sections);
+  if (full.length <= MAX_DESCRIPTION_CHARS || credits.length === 0) return full;
+
+  const index = sections.findIndex((s) => s.startsWith(`${CC_HEADING}\n`));
+  if (index === -1) return full.slice(0, MAX_DESCRIPTION_CHARS);
+
+  for (const build of [creditSectionGrouped, creditSectionNamesOnly]) {
+    const next = [...sections];
+    next[index] = build(credits);
+    const text = join(next);
+    if (text.length <= MAX_DESCRIPTION_CHARS) return text;
+  }
+
+  // Every photographer still named, which is the part that is not negotiable.
+  const last = [...sections];
+  last[index] = creditSectionNamesOnly(credits);
+  return join(last).slice(0, MAX_DESCRIPTION_CHARS);
+}
+
+/**
  * One entry per distinct photograph, in the order the video shows them.
  *
  * Deduplicated on the source URL rather than on the photographer: one person
  * may have taken two of the pictures, and crediting them twice reads as a
  * mistake - but two different photographs by the same person still need their
- * own links.
+ * own links. (The photographer is part of the key only for press photographs,
+ * where the URL is the article rather than the picture.)
  */
 function collectImageCredits(timeline: Timeline): PublishKit['images'] {
   const seen = new Set<string>();
   const credits: PublishKit['images'] = [];
 
   for (const scene of timeline.scenes) {
-    const credit = scene.background.credit;
-    if (!credit || seen.has(credit.sourceUrl)) continue;
-    seen.add(credit.sourceUrl);
+    // A scene drawn rather than photographed has nobody to credit, which is
+    // the point of drawing it.
+    const credit = scene.background?.credit;
+    // Keyed on the photographer as well: a press photograph's link is its
+    // article, so five pictures from one story share a URL - and keying on the
+    // URL alone kept the first photographer and silently dropped the others.
+    const key = `${credit?.sourceUrl} ${credit?.creator}`;
+    if (!credit || seen.has(key)) continue;
+    seen.add(key);
     credits.push({
       creator: credit.creator,
+      provider: credit.provider,
       license: credit.license,
       licenseUrl: credit.licenseUrl,
       sourceUrl: credit.sourceUrl,
@@ -348,7 +513,11 @@ export async function writePublishKit(outputDir: string, kit: PublishKit): Promi
     '## Ảnh dùng trong video',
     '',
     ...(kit.images.length > 0
-      ? kit.images.map((image) => `- ${image.creator} (${image.license.toUpperCase()}) ${image.sourceUrl}`)
+      ? kit.images.map((image) =>
+          mustPreserveOriginal(image.license)
+            ? `- ${image.creator} / ${image.provider ?? image.creator} (dùng với sự cho phép của toà soạn) ${image.sourceUrl}`
+            : `- ${image.creator} (${image.license.toUpperCase()}) ${image.sourceUrl}`,
+        )
       : ['(none)']),
     '',
   ].join('\n');

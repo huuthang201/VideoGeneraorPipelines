@@ -6,6 +6,8 @@ import { AspectSchema, FRAME_SIZES, StyleNameSchema, type ModuleId } from '../do
 import { PODCAST_ENV_DEFAULTS } from '../modules/podcast/env-defaults';
 import { FACT_ENV_DEFAULTS } from '../modules/fact/env-defaults';
 import { PSYCH_ENV_DEFAULTS } from '../modules/psych/env-defaults';
+import { CARTOON_ENV_DEFAULTS } from '../modules/cartoon/env-defaults';
+import { FACTLONG_ENV_DEFAULTS } from '../modules/factlong/env-defaults';
 import type { AssetKind } from '../domain/project';
 
 /**
@@ -65,7 +67,40 @@ const MODULE_DEFAULTS: Record<ModuleId, Record<string, string>> = {
   podcast: PODCAST_ENV_DEFAULTS,
   fact: FACT_ENV_DEFAULTS,
   psych: PSYCH_ENV_DEFAULTS,
+  cartoon: CARTOON_ENV_DEFAULTS,
+  factlong: FACTLONG_ENV_DEFAULTS,
 };
+
+/**
+ * The OAuth client another module publishes with.
+ *
+ * Read straight out of that module's env files rather than copied into this
+ * one's, so there is exactly one place a rotated secret has to be pasted. The
+ * layering is the same as `layeredEnv`'s and for the same reason - a value in
+ * `.env.<module>` beats one in `.env` - and the real environment still wins
+ * over both, because that is where a CI secret would live.
+ *
+ * Falls back to this module's own values whenever the borrowed ones are absent,
+ * so a mistyped module name degrades to "publish with your own credentials"
+ * rather than to "publish with no credentials at all".
+ */
+function borrowedCredentials(
+  from: string,
+  own: { clientId: string; clientSecret: string },
+): { clientId: string; clientSecret: string } {
+  if (!from) return own;
+
+  const donor = {
+    ...readEnvFile('.env'),
+    ...readEnvFile(`.env.${from}`),
+    ...process.env,
+  };
+
+  return {
+    clientId: (donor.YOUTUBE_CLIENT_ID ?? '').trim() || own.clientId,
+    clientSecret: (donor.YOUTUBE_CLIENT_SECRET ?? '').trim() || own.clientSecret,
+  };
+}
 
 function layeredEnv(module: ModuleId): NodeJS.ProcessEnv {
   return {
@@ -144,6 +179,19 @@ const EnvSchema = z.object({
   IMAGE_REVIEW: z
     .enum(['on', 'off'])
     .default('on'),
+
+  /**
+   * Whether CC BY-SA pictures may be used.
+   *
+   * Off by default, and a channel's decision rather than a technical one: the
+   * ShareAlike term arguably makes a video built from such a picture an
+   * adaptation that must itself be BY-SA. The owner of Ủa Thật À? accepted
+   * that for their channel, because about 40% of the real photographs of real
+   * places on Wikimedia Commons are BY-SA - so `fact` and `factlong` turn it on
+   * in their defaults, and nothing else does. NonCommercial and NoDerivatives
+   * stay excluded whatever this says.
+   */
+  STOCK_SHARE_ALIKE: z.enum(['on', 'off']).default('off'),
 
   STOCK_SOURCES: z.string().default('stocksnap,rawpixel,flickr,nappy'),
 
@@ -303,6 +351,22 @@ const EnvSchema = z.object({
    */
   CHANNEL_NAME: z.string().default(''),
 
+  /**
+   * Which module's YouTube credentials to use, when they are not this one's.
+   *
+   * Normally empty, and the rule it exists for still stands: *the token is the
+   * channel*, so two channels can never share one. This is the other case -
+   * one channel with two machines. `factlong` makes hour-shaped videos for the
+   * same YouTube channel `fact` makes shorts for, and authorising the same
+   * channel twice would mean two consent flows, two refresh tokens, and two
+   * separate things to notice when Google expires them.
+   *
+   * Setting this is therefore a declaration that the two modules ARE one
+   * channel. Point it at a module publishing somewhere else and videos go to
+   * the wrong channel with nothing failing.
+   */
+  YOUTUBE_TOKEN_FROM: z.string().default(''),
+
   AI_PROVIDER: z.enum(['claude-code']).default('claude-code'),
   CLAUDE_BIN: z.string().default('claude'),
   CLAUDE_MODEL: z.string().default('sonnet'),
@@ -361,6 +425,8 @@ export interface AppConfig {
     sources: string;
     /** Whether to run the visual review pass. See IMAGE_REVIEW. */
     review: boolean;
+    /** Whether CC BY-SA pictures may be used. See STOCK_SHARE_ALIKE. */
+    allowShareAlike: boolean;
   };
 
   tts: {
@@ -380,6 +446,11 @@ export interface AppConfig {
     file: string;
     volume: number;
   };
+  /**
+   * Where sound effects live. A folder, like music - drop a file in and the
+   * next render may use it; leave it empty and nothing asks for one.
+   */
+  sfxDir: string;
   youtube: {
     clientId: string;
     clientSecret: string;
@@ -435,6 +506,7 @@ export function loadConfig(
       fallbackQuery: env.STOCK_FALLBACK_QUERY.trim(),
       sources: env.STOCK_SOURCES.trim(),
       review: env.IMAGE_REVIEW === 'on',
+      allowShareAlike: env.STOCK_SHARE_ALIKE === 'on',
     },
 
     tts: {
@@ -449,16 +521,31 @@ export function loadConfig(
       pythonBin: path.resolve(env.PYTHON_BIN),
       vieneuPythonBin: path.resolve(env.VIENEU_PYTHON_BIN),
     },
+    sfxDir: path.resolve('assets', 'sfx'),
     music: {
       dir: path.resolve('assets', 'music'),
       file: env.MUSIC_FILE.trim(),
       volume: env.MUSIC_VOLUME,
     },
     youtube: {
-      clientId: env.YOUTUBE_CLIENT_ID.trim(),
-      clientSecret: env.YOUTUBE_CLIENT_SECRET.trim(),
+      // Borrowed whole when YOUTUBE_TOKEN_FROM is set, and it has to be whole:
+      // a refresh token only works with the OAuth client that issued it, so
+      // sharing the token file while keeping this module's own client id is a
+      // guaranteed `invalid_client`. It also means rotating the secret once,
+      // in the owning module's .env, fixes every module pointing at it.
+      ...borrowedCredentials(env.YOUTUBE_TOKEN_FROM.trim(), {
+        clientId: env.YOUTUBE_CLIENT_ID.trim(),
+        clientSecret: env.YOUTUBE_CLIENT_SECRET.trim(),
+      }),
       // Under runtime/, which is gitignored: this file is a credential.
-      tokenPath: path.join(runtimeDir, 'youtube-token.json'),
+      // YOUTUBE_TOKEN_FROM redirects it at another module's, which is how two
+      // machines publishing to one channel share one authorisation.
+      tokenPath: path.join(
+        env.YOUTUBE_TOKEN_FROM.trim()
+          ? path.resolve('runtime', env.YOUTUBE_TOKEN_FROM.trim())
+          : runtimeDir,
+        'youtube-token.json',
+      ),
       redirectPort: env.YOUTUBE_REDIRECT_PORT,
       // Separated here rather than trusted to .env: dotenv strips trailing
       // whitespace from an unquoted value, so "[Fact] " arrives without its

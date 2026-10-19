@@ -12,10 +12,12 @@
  *    NonCommercial and NoDerivatives licences are not usable here, and neither
  *    is a Google image search - the fact that a picture is reachable says
  *    nothing about whether it may be republished.
- * 2. **ShareAlike is excluded too**, which is a subtler point. CC BY-SA asks
- *    derivative works to carry the same licence; a video built partly from a
- *    BY-SA photograph arguably has to be BY-SA itself, and that is not a
- *    decision a rendering pipeline should make on a channel's behalf.
+ * 2. **ShareAlike is excluded by default**, which is a subtler point. CC BY-SA
+ *    asks derivative works to carry the same licence; a video built partly
+ *    from a BY-SA photograph arguably has to be BY-SA itself, and that is not
+ *    a decision a rendering pipeline should make on a channel's behalf. A
+ *    channel's owner can make it, with STOCK_SHARE_ALIKE - the owner of Ủa
+ *    Thật À? did, so `fact` and `factlong` accept BY-SA and nothing else does.
  * 3. **The picture has to be big.** A backdrop is cropped to fill a 1080x1920
  *    frame and then pushed in another twenty percent by the camera move, so
  *    anything under about 1600px on its short edge is visibly soft by the end
@@ -96,6 +98,11 @@ export interface ReviewCandidate {
   title: string;
   /** Filename inside the review directory, e.g. "03-hamster-face.jpg". */
   filename: string;
+  /**
+   * The scene already showing this picture, on a sheet that allows reuse. Said
+   * to the model so a second use is a choice it makes knowingly.
+   */
+  usedBy?: string;
 }
 
 export interface StockSearchOptions {
@@ -104,6 +111,17 @@ export interface StockSearchOptions {
   limit: number;
   /** Shortest acceptable edge, in pixels. See rule 3 above. */
   minEdge: number;
+  /**
+   * The video frame's aspect, so ranking can prefer a photograph that survives
+   * being cropped to it.
+   *
+   * Optional, and defaulted to 9:16 where it is absent, because for two years
+   * every caller of this was a vertical short and the preference was hard-coded
+   * to match. It stopped being safe to assume the moment the podcast started
+   * searching: a portrait photograph ranked first for a 16:9 episode is a small
+   * picture with grey either side of it.
+   */
+  frameAspect?: number;
 }
 
 export interface StockImageProvider {

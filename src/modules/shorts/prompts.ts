@@ -30,6 +30,16 @@ export interface StoryboardPromptInput {
   workingTitle: string;
   info: ProductInfo | null;
   targetDurationSec: number;
+  /**
+   * The band the finished script is accepted inside, in seconds.
+   *
+   * Carried into the prompt rather than left implicit so the model is told the
+   * same numbers the gate enforces. Stating a tolerance in the prompt that the
+   * check does not use is the kind of drift that survives review: the draft
+   * comes back inside the band it was told about and is rejected against
+   * another, and the retry says something the prompt appears to contradict.
+   */
+  durationBandSec: { minSeconds: number; maxSeconds: number };
   defaultStyle: string;
   defaultVoice: string;
   /** Channel name for the closing call to subscribe. Empty means no call. */

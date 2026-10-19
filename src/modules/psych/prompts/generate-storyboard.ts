@@ -1,7 +1,9 @@
 import type { StoryboardPromptInput } from '../../shorts/prompts';
 import {
+  hookSection,
   imageQuerySection,
   lengthSection,
+  publishSection,
   sceneFieldsSection,
   shapeOf,
   validValuesSection,
@@ -24,7 +26,7 @@ import { MAX_IMAGE_QUERIES, MIN_IMAGE_QUERIES } from '../../shorts/domain/storyb
  *
  * So the longest section of this prompt is a list of things it may not say.
  * That is the opposite balance from the fact channel, where the fight is
- * finding something worth forty-five seconds; here the material is endless and
+ * finding something worth thirty seconds; here the material is endless and
  * the fight is not printing folklore.
  *
  * The second thing this channel owns is *shape*. A fact is told: here is a
@@ -35,7 +37,7 @@ import { MAX_IMAGE_QUERIES, MIN_IMAGE_QUERIES } from '../../shorts/domain/storyb
  */
 
 export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
-  const shape = shapeOf(input.targetDurationSec);
+  const shape = shapeOf(input.targetDurationSec, input.durationBandSec);
   const { seconds, wordsPerScene } = shape;
 
   return [
@@ -103,7 +105,7 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
     `- Không chẩn đoán bệnh. Kênh này không nói ai bị trầm cảm, rối loạn nhân`,
     `  cách hay tự kỷ, và không đưa lời khuyên điều trị.`,
     ``,
-    `## Yêu cầu số hai: người xem phải thấy chính mình trong hai giây đầu`,
+    `## Yêu cầu số hai: người xem phải thấy chính mình ngay câu đầu`,
     ``,
     `Đây là chỗ kênh này khác một kênh fact. Một sự thật lạ thì tự nó đã hấp dẫn.`,
     `Một hiệu ứng tâm lý thì không - cho đến khi người xem nhận ra họ vừa bị nó`,
@@ -114,7 +116,7 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
     `không "hôm nay chúng ta sẽ tìm hiểu", không hỏi tu từ kiểu "bạn có bao giờ`,
     `tự hỏi không".`,
     ``,
-    `Tốt:   "Cái áo hai triệu tự nhiên thành rẻ, chỉ vì bên cạnh nó treo cái năm triệu."`,
+    `Tốt:   "Cái áo hai triệu tự nhiên thành rẻ, vì bên cạnh treo cái năm triệu."`,
     `Tốt:   "Bài hát bạn ghét, nghe đến lần thứ mười thì tự nhiên thấy hay."`,
     `Tốt:   "Người ta cho bạn miếng dùng thử, và bạn thấy khó xử nếu không mua."`,
     `Tệ:    "Xin chào các bạn, hôm nay mình nói về hiệu ứng mỏ neo."`,
@@ -124,6 +126,11 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
     `Nguyên tắc: **cảnh mở đầu tả hiện tượng, không gọi tên nó.** Tên gọi để dành`,
     `cho cảnh thứ hai, và lúc đó nó trở thành phần thưởng chứ không phải bài học.`,
     ``,
+    `Chọn tình huống CỤ THỂ và thường gặp nhất, chứ không phải ví dụ dễ giải`,
+    `thích nhất. Càng cụ thể thì người xem càng thấy đúng chính mình - "cái áo hai`,
+    `triệu" ăn hơn hẳn "khi đi mua sắm".`,
+    ``,
+    ...hookSection(shape),
     `## Nếu video nói về thao túng`,
     ``,
     `Kênh có nói về thao túng, và cách nói là **để người xem nhận ra khi mình bị`,
@@ -170,7 +177,7 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
           `"${input.brief.hook}"`,
         ].join('\n')
       : [
-          `Tự viết câu mở theo đúng nguyên tắc "hai giây đầu tiên" ở trên: một`,
+          `Tự viết câu mở theo đúng nguyên tắc "ba giây đầu tiên" ở trên: một`,
           `tình huống đời thường người xem đã từng sống qua, chưa gọi tên hiệu ứng.`,
         ].join('\n'),
     ``,
@@ -292,23 +299,20 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
       : [`  Không xin like, không xin đăng ký.`]),
     ``,
     ...validValuesSection(input.defaultStyle, input.defaultVoice),
-    `## Phần đăng YouTube`,
-    ``,
-    `Video được đăng dưới dạng YouTube Short, nên viết luôn phần đăng - một object`,
-    `"publish" gồm "title", "description" và "tags". Tất cả bằng tiếng Việt.`,
-    ``,
-    `- **title**: tối đa 100 ký tự, nhưng người xem chỉ thấy khoảng 60 ký tự đầu`,
-    `  trên khung Short. Nói thẳng vào hiện tượng, đúng giọng của video: "Vì sao`,
-    `  cái áo đắt tự nhiên thành rẻ" là được; "BÍ MẬT TÂM LÝ 99% KHÔNG BIẾT" thì`,
-    `  không. Không viết hoa toàn bộ, không emoji, không hứa đọc vị người khác.`,
-    `- **description**: hai đến ba câu. Câu đầu nhắc lại hiện tượng, câu sau thêm`,
-    `  một chỗ khác trong đời sống mà nó cũng xảy ra thì càng tốt. KHÔNG viết danh`,
-    `  sách chương và KHÔNG viết dòng ghi nguồn nhạc - hệ thống tự sinh cả hai,`,
-    `  kèm thẻ #shorts.`,
-    `- **tags**: năm đến mười hai thẻ, chữ thường, là những từ người ta thực sự`,
-    `  gõ tìm. Trộn thẻ rộng ("tâm lý học", "tâm lý", "hành vi con người") với`,
-    `  thẻ riêng của video này ("hiệu ứng mỏ neo", "mua sắm").`,
-    ``,
+    ...publishSection({
+      withholding: [
+        'Vì sao cái áo hai triệu tự nhiên thành rẻ',
+        'Bài hát bạn ghét, nghe mãi lại thấy hay',
+        'Miếng dùng thử miễn phí không hề miễn phí',
+      ],
+      givingAway: [
+        '"Hiệu ứng mỏ neo: não bám vào con số đầu tiên nhìn thấy"  ← xong video rồi',
+        '"Càng nghe nhiều càng thấy hay - hiệu ứng tiếp xúc đơn thuần"  ← hết bất ngờ',
+        '"BÍ MẬT TÂM LÝ 99% KHÔNG BIẾT"  ← câu view, chẳng nêu hiện tượng nào cả',
+      ],
+      broadTags: ['tâm lý học', 'tâm lý', 'hành vi con người'],
+      narrowTags: ['hiệu ứng mỏ neo', 'mua sắm'],
+    }),
     `## Định dạng trả về`,
     ``,
     `Trả về DUY NHẤT một object JSON, không gì khác - không giải thích, không rào`,
@@ -327,7 +331,7 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
           imageQueries: ['price tags shop', 'shopping mall people', 'person thinking window'],
         },
         publish: {
-          title: 'Vì sao cái áo đắt tự nhiên thành rẻ',
+          title: 'Vì sao cái áo hai triệu tự nhiên thành rẻ',
           description:
             'Cái áo hai triệu thành rẻ chỉ vì bên cạnh treo cái năm triệu - ' +
             'não bạn không định giá từ con số không, nó bám vào con số đầu tiên nhìn thấy.\n\n' +
@@ -340,10 +344,8 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
             type: 'intro',
             imageQuery: 'price tags shop',
             title: 'Cái áo hai triệu',
-            narration:
-              'Cái áo hai triệu tự nhiên thành rẻ, chỉ vì người ta treo ngay bên ' +
-              'cạnh nó một cái năm triệu,',
-            duration: 5,
+            narration: 'Cái áo hai triệu tự nhiên thành rẻ.',
+            duration: 3,
             animation: 'zoom-in',
             transition: 'fade',
             effect: 'none',
@@ -355,9 +357,9 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
             imageQuery: 'shopping mall people',
             title: '',
             narration:
-              'và cái đó có tên là hiệu ứng mỏ neo: não bạn không định giá được ' +
-              'từ con số không, nên nó bám vào con số đầu tiên nó nhìn thấy, rồi ' +
-              'đo mọi thứ còn lại bằng cái mốc ấy.',
+              'Chỉ vì người ta treo ngay bên cạnh nó một cái năm triệu, và cái đó ' +
+              'có tên là hiệu ứng mỏ neo: não bạn không định giá được từ con số ' +
+              'không, nên nó bám vào con số đầu tiên nó nhìn thấy.',
             duration: 5,
             animation: 'pan-right',
             transition: 'cut',
@@ -371,9 +373,11 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
     ),
     '```',
     ``,
-    `Chú ý hai cảnh mẫu ở trên: câu của cảnh đầu chưa kết thúc, nó chạy tiếp sang`,
-    `cảnh sau. Đó chính là kiểu viết cần có. Và chú ý cảnh một tả hiện tượng, cảnh`,
-    `hai mới gọi tên - đó cũng chính là thứ tự cần có.`,
+    `Chú ý hai cảnh mẫu ở trên. Cảnh mở đầu ngắn và trọn một câu - đó là ba giây`,
+    `hook. Từ cảnh thứ hai trở đi thì viết liền mạch, câu chạy tiếp sang cảnh sau`,
+    `được và nên như vậy. Và chú ý cảnh một tả hiện tượng, cảnh hai mới gọi tên -`,
+    `đó cũng chính là thứ tự cần có, và cũng chính là thứ tự của tiêu đề với mô`,
+    `tả: tiêu đề nêu cái áo, mô tả mới nói hiệu ứng mỏ neo.`,
     ``,
     `Để "content.narration" là chuỗi rỗng - hệ thống tự nối lời đọc của các cảnh`,
     `lại. Mỗi "imageQuery" của cảnh phải trùng đúng một chuỗi trong`,

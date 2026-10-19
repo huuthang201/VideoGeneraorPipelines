@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import path from 'node:path';
-import { readdir, mkdir, rm, rename, writeFile, readFile, cp } from 'node:fs/promises';
+import { readdir, mkdir, rm, rename, stat, writeFile, readFile, cp } from 'node:fs/promises';
 import { loadConfig, jobPaths, type AppConfig } from '../config/env';
 import { createLogger } from '../utils/logger';
 import {
@@ -30,6 +30,13 @@ import {
   uploadVideo,
   verifyCredentials,
 } from '../publish/youtube';
+import {
+  coveredTitles,
+  exportSheet,
+  readTopics,
+  recordTopicUpload,
+  topicSheetPath,
+} from '../pipeline/topic-ledger';
 import {
   peekSlot,
   releaseSlot,
@@ -677,6 +684,10 @@ async function uploadOne(
     'utf8',
   );
 
+  // The ledger already holds this subject; this records where it ended up, so
+  // the spreadsheet doubles as a list of what is actually on the channel.
+  await recordTopicUpload(config, projectId, result.url, logger).catch(() => undefined);
+
   logger.done(`Uploaded to ${result.channel?.title ?? 'the authorised channel'} → ${result.url}`);
   if (result.privacyStatus !== privacy) {
     logger.warn(`YouTube set it to "${result.privacyStatus}", not "${privacy}". ${PRIVACY_NOTE}`);
@@ -947,6 +958,138 @@ async function findUploadable(config: AppConfig): Promise<string[]> {
 }
 
 /**
+ * The subject list, on screen and as a markdown file.
+ *
+ * Read-only by default; `--export` rewrites `de-tai.md` from the ledger. The
+ * file is regenerated after every accepted storyboard anyway, so this is for
+ * the case where a write failed, or where somebody edited it and wants the
+ * real list back.
+ */
+program
+  .command('de-tai')
+  .description('Liệt kê đề tài kênh đã làm, và xuất ra file markdown')
+  .option('--export', 'ghi lại de-tai.md từ sổ', false)
+  .action(async (opts: { export: boolean }) => {
+    const config = loadModuleConfig();
+    const logger = createLogger({ level: config.logLevel });
+
+    await run(async () => {
+      const topics = await readTopics(config);
+
+      if (topics.length === 0) {
+        logger.warn('Sổ đề tài đang trống - chưa có kịch bản nào được viết qua pipeline.');
+      }
+
+      for (const topic of topics) {
+        console.log(
+          `  ${topic.at.slice(0, 10)}  ${topic.title}${topic.youtubeUrl ? `  → ${topic.youtubeUrl}` : '  (chưa đăng)'}`,
+        );
+      }
+
+      if (opts.export || topics.length > 0) {
+        const ok = await exportSheet(config, topics, logger);
+        if (ok) logger.done(`${topics.length} đề tài → ${topicSheetPath(config)}`);
+      }
+    }, logger);
+  });
+
+/**
+ * When this channel may upload again.
+ *
+ * YouTube caps how many videos a channel may upload in a day, refuses the rest
+ * with `uploadLimitExceeded`, and publishes neither the number nor the reset -
+ * there is no endpoint to ask. So this measures the only thing that is
+ * knowable: the channel's own history. Every successful upload leaves an
+ * `output/youtube-upload.json` with a timestamp, and counting the ones inside
+ * the last twenty-four hours says how full the window is; the oldest of them
+ * leaving that window is the first moment a slot can free up.
+ *
+ * It is an estimate and says so. What makes it worth having anyway is that the
+ * alternative is guessing - and that the same numbers explain *why* the wall
+ * was hit, which "try again later" does not.
+ */
+program
+  .command('upload-status')
+  .description('How full the daily upload window is, and when a slot next frees up')
+  .action(async () => {
+    const config = loadModuleConfig();
+    const logger = createLogger({ level: config.logLevel });
+
+    await run(async () => {
+      const now = Date.now();
+      const DAY_MS = 24 * 60 * 60 * 1000;
+
+      const ids = (await readdir(config.jobsDir, { withFileTypes: true }).catch(() => []))
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+
+      const uploaded: Date[] = [];
+      let waiting = 0;
+
+      for (const id of ids) {
+        const paths = jobPaths(config.jobsDir, id);
+        const record = await readFile(
+          path.join(paths.output, 'youtube-upload.json'),
+          'utf8',
+        ).catch(() => null);
+
+        if (record) {
+          try {
+            const at = (JSON.parse(record) as { uploadedAt?: string }).uploadedAt;
+            if (at) uploaded.push(new Date(at));
+          } catch {
+            // A half-written record is not worth failing a status report over.
+          }
+          continue;
+        }
+
+        // Not uploaded. Rendered and real narration means it is queueing.
+        const jobRaw = await readFile(paths.jobJson, 'utf8').catch(() => null);
+        if (!jobRaw) continue;
+        try {
+          const job = JSON.parse(jobRaw) as { status?: string; devMock?: boolean };
+          const rendered = await stat(paths.videoMp4).then(
+            () => true,
+            () => false,
+          );
+          if (job.status === 'DONE' && !job.devMock && rendered) waiting += 1;
+        } catch {
+          // Same.
+        }
+      }
+
+      uploaded.sort((a, b) => a.getTime() - b.getTime());
+      const inWindow = uploaded.filter((d) => now - d.getTime() < DAY_MS);
+      const last = uploaded.at(-1);
+
+      const when = (d: Date) => d.toLocaleString('vi-VN', { hour12: false });
+
+      console.log(`  kênh              : ${videoModule.label}`);
+      console.log(`  đã đăng / 24h qua : ${inWindow.length}`);
+      console.log(`  lần cuối thành công: ${last ? when(last) : '(chưa có)'}`);
+      console.log(`  video đang chờ    : ${waiting}`);
+
+      if (inWindow.length === 0) {
+        logger.done('Cửa sổ 24h đang trống - không có gì cản việc tải lên.');
+      } else {
+        const frees = new Date(inWindow[0]!.getTime() + DAY_MS);
+        const hours = (frees.getTime() - now) / 3_600_000;
+        console.log(`  suất cũ nhất rời đi: ${when(frees)}  (còn ${hours.toFixed(1)} tiếng)`);
+        logger.warn(
+          'YouTube không công bố hạn mức lẫn giờ reset, nên đây là ước lượng đo từ lịch sử ' +
+            'của chính kênh. Nếu đang bị từ chối, mốc trên là lúc sớm nhất đáng thử lại.',
+        );
+      }
+
+      const slot = await peekSlot(
+        config.youtube.schedulePath,
+        config.youtube.scheduleIntervalHours,
+      );
+      console.log(`  suất lịch kế tiếp : ${when(slot.publishAt)}`);
+    }, logger);
+  });
+
+/**
  * What the engine would find for a query, without spending a render on it.
  *
  * Exists because the one judgement this design took away from the model is what
@@ -1156,6 +1299,18 @@ async function readCoveredTitles(config: AppConfig, exceptProjectId: string): Pr
     } catch {
       // A malformed storyboard is not worth failing a suggestion over.
     }
+  }
+
+  /*
+   * Two sources, and neither is sufficient alone.
+   *
+   * The project folders are the live view: accurate about what exists now, and
+   * silent about anything deleted. The ledger is durable but only knows what
+   * has happened since it was introduced. A suggestion has to avoid the union.
+   */
+  const recorded = await coveredTitles(config).catch(() => [] as string[]);
+  for (const title of recorded) {
+    if (!titles.includes(title)) titles.push(title);
   }
 
   return titles;

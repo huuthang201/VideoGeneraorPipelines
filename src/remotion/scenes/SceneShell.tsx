@@ -1,7 +1,7 @@
 import { AbsoluteFill, useVideoConfig } from 'remotion';
 import type { ReactNode } from 'react';
 import type { TimelineScene } from '../../domain/timeline';
-import type { Theme } from '../themes/theme';
+import { preservedPhotoRegion, type Theme } from '../themes/theme';
 import { SceneImage } from '../components/SceneImage';
 import { CaptionRenderer } from '../components/CaptionRenderer';
 import { ImageCredit } from '../components/ImageCredit';
@@ -34,26 +34,62 @@ export const SceneShell: React.FC<
 > = ({ scene, theme, children, scrimPosition = 'bottom' }) => {
   const { width, height } = useVideoConfig();
 
+  const background = scene.background;
+  if (!background) {
+    // Not defensive padding: `SceneRouter` sends stage scenes elsewhere, so
+    // arriving here without a photograph means the routing is wrong. Failing
+    // loudly beats a black frame discovered after a seven-minute render.
+    throw new Error(
+      `Scene "${scene.id}" has no background photograph. A drawn stage must be routed to the ` +
+        'cartoon scene component, not to SceneShell.',
+    );
+  }
+
+  /*
+   * A photograph used by permission is shown exactly as published.
+   *
+   * No camera move, because a zoom is a crop that changes over time and a pan
+   * shows part of the picture at once. No effect and no particles laid over it,
+   * because a vignette or drifting dust is an edit to somebody else's
+   * photograph. The fit is already `contain` - the timeline builder sees to
+   * that - so the whole frame of their picture is on screen for the whole scene.
+   *
+   * Nor do the subtitle and the heading sit on it, or the scrim that darkens a
+   * photograph for their sake: the picture is fitted into the frame above
+   * them, and they read off the plain background below it. The scene types
+   * move their heading there when this is set.
+   */
+  const preserve = background.preserve;
+  const region = preserve
+    ? preservedPhotoRegion(theme, width, height, {
+        hasCaptions: scene.captionPages.length > 0,
+        title: scene.title,
+      })
+    : undefined;
+
   return (
     <AbsoluteFill style={{ backgroundColor: theme.colors.background }}>
-      <SceneEffectLayer effect={scene.effect}>
+      <SceneEffectLayer effect={preserve ? 'none' : scene.effect}>
         <SceneImage
-          src={scene.background.src}
-          width={scene.background.width}
-          height={scene.background.height}
-          fit={scene.background.fit}
-          animation={scene.animation}
+          src={background.src}
+          width={background.width}
+          height={background.height}
+          fit={background.fit}
+          animation={preserve ? 'none' : scene.animation}
           durationInFrames={scene.durationInFrames}
           frameWidth={width}
           frameHeight={height}
           backgroundColor={theme.colors.background}
           amplitude={theme.motion.amplitude}
+          region={region}
         />
 
-        <AbsoluteFill style={{ background: scrimGradient(scrimPosition, theme) }} />
+        {!preserve && (
+          <AbsoluteFill style={{ background: scrimGradient(scrimPosition, theme) }} />
+        )}
 
         <MotionOverlay
-          overlay={scene.overlay}
+          overlay={preserve ? 'none' : scene.overlay}
           durationInFrames={scene.durationInFrames}
           theme={theme}
           // The scene's own position in the episode, so two scenes sharing an
@@ -67,7 +103,7 @@ export const SceneShell: React.FC<
         it can never sit on top of a word being read. It is a licence condition
         rather than decoration - see ImageCredit.
       */}
-      <ImageCredit credit={scene.background.credit} theme={theme} />
+      <ImageCredit credit={background.credit} theme={theme} prominent={preserve} />
 
       {children}
 

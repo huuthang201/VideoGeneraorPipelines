@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CalendarClockIcon,
   ExternalLinkIcon,
@@ -24,7 +24,6 @@ import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PipelineFlow } from '@/components/pipeline/PipelineFlow';
 import { StepPanel } from '@/components/pipeline/StepPanel';
-import { ScenePicker } from '@/components/ScenePicker';
 import { useToast } from '@/components/Toaster';
 import { cn } from '@/lib/utils';
 
@@ -117,9 +116,32 @@ export function ProjectDialog({
     }
   };
 
-  const saveBrief = async (patch: Partial<Brief>) => {
-    if (!detail) return;
-    const brief: Brief = { ...(detail.brief ?? {}), ...patch };
+  /*
+   * Brief saves run one after another, each built on the brief the last one
+   * left behind.
+   *
+   * Two saves routinely leave in the same instant: typing into the idea and
+   * then ticking the permission box blurs the textarea (one save) and changes
+   * the box (another). Built from the brief this dialog last loaded, each
+   * carried the other's old value, and whichever landed second undid the first
+   * - the idea reverted, or the permission quietly vanished.
+   */
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const latestBrief = useRef<Brief | null>(null);
+  useEffect(() => {
+    latestBrief.current = detail?.brief ?? null;
+  }, [detail?.brief]);
+
+  /** Resolves true once saved; a failure has already been toasted. */
+  const saveBrief = (patch: Partial<Brief>): Promise<boolean> => {
+    const queued = saveQueue.current.then(() => writeBrief(patch));
+    saveQueue.current = queued.catch(() => {});
+    return queued;
+  };
+
+  const writeBrief = async (patch: Partial<Brief>): Promise<boolean> => {
+    if (!detail) return false;
+    const brief: Brief = { ...(latestBrief.current ?? {}), ...patch };
     // Empty strings are "not set", not "set to nothing" - the schemas reject a
     // present-but-empty context, and sending one would fail every save.
     const body: Brief = {};
@@ -127,17 +149,24 @@ export function ProjectDialog({
     if (brief.hook?.trim()) body.hook = brief.hook.trim();
     if (isPodcast()) {
       if (brief.targetMinutes) body.targetMinutes = brief.targetMinutes;
-      if (brief.environments?.length) body.environments = brief.environments;
     } else if (brief.targetSeconds) {
       body.targetSeconds = brief.targetSeconds;
     }
+    // Carried on every save, not only the one that ticked the box: this body
+    // replaces the file, and a permission that vanished whenever somebody fixed
+    // a typo in the idea would be a video quietly built without the photographs
+    // it was promised. `sources` is not sent - the server derives it from the
+    // context, so the two cannot disagree.
+    if (brief.sourceImagesPermitted) body.sourceImagesPermitted = true;
 
     try {
-      await apiJson(`/projects/${projectId}/brief`, 'PUT', body);
+      latestBrief.current = await apiJson<Brief>(`/projects/${projectId}/brief`, 'PUT', body);
       await load();
       onChanged();
+      return true;
     } catch (err) {
       toast('error', err instanceof Error ? err.message : String(err));
+      return false;
     }
   };
 
@@ -201,7 +230,7 @@ export function ProjectDialog({
                   editable={step.id === 'brief'}
                   disabled={running}
                   defaultTargetSeconds={detail?.defaultTargetSeconds ?? null}
-                  onSaveBrief={(patch) => void saveBrief(patch)}
+                  onSaveBrief={saveBrief}
                   onClose={() => setOpenStep(null)}
                 />
               ) : null;
@@ -321,7 +350,7 @@ export function ProjectDialog({
 
             <p className="text-muted-foreground basis-full text-xs">
               Chạy hết mọi bước: nghĩ đề tài (nếu chưa có) → kịch bản →{' '}
-              {isPodcast() ? 'chọn ảnh' : 'tìm ảnh'} → giọng đọc → dựng → kiểm tra
+              tìm ảnh → giọng đọc → dựng → kiểm tra
               {detail?.autoPublish !== 'none' ? ' → đăng YouTube' : ''}. Bấm vào từng ô
               phía trên để xem chi tiết bước đó.
             </p>
@@ -329,19 +358,6 @@ export function ProjectDialog({
         </section>
 
         <Separator />
-
-        {/* ---- Backdrops (podcast only) -------------------------------- */}
-        {isPodcast() && detail?.library && (
-          <>
-            <ScenePicker
-              library={detail.library}
-              picked={detail.brief?.environments ?? []}
-              disabled={running}
-              onChange={(environments) => saveBrief({ environments })}
-            />
-            <Separator />
-          </>
-        )}
 
         <Separator />
         <div className="flex justify-between">

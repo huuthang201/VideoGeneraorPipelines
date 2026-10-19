@@ -1,7 +1,9 @@
 import type { StoryboardPromptInput } from '../../shorts/prompts';
 import {
+  hookSection,
   imageQuerySection,
   lengthSection,
+  publishSection,
   sceneFieldsSection,
   shapeOf,
   validValuesSection,
@@ -28,10 +30,10 @@ import { MAX_IMAGE_QUERIES, MIN_IMAGE_QUERIES } from '../../shorts/domain/storyb
  * ## What is hard here is not length
  *
  * In the long-form engine this grew out of, length was the fight: a model asked
- * for ten minutes returns two. At forty-five seconds the model has no trouble
+ * for ten minutes returns two. At thirty seconds the model has no trouble
  * filling the budget, and the checks in `checkStoryboardStructure` guard both
- * ends because *overrunning* is now the expensive failure - past sixty seconds
- * YouTube stops treating the upload as a Short.
+ * ends because the band is now four seconds wide - a script fifteen percent
+ * long is no longer untidy, it is outside the format the channel is written to.
  *
  * The fight here is truthfulness and the first two seconds. A "fact" video is
  * worth nothing if the fact is invented, and it is watched by nobody if the
@@ -39,7 +41,7 @@ import { MAX_IMAGE_QUERIES, MIN_IMAGE_QUERIES } from '../../shorts/domain/storyb
  */
 
 export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
-  const shape = shapeOf(input.targetDurationSec);
+  const shape = shapeOf(input.targetDurationSec, input.durationBandSec);
   const { seconds, wordsPerScene } = shape;
 
   return [
@@ -71,20 +73,27 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
     ``,
     `Một sự thật cũ mà đúng luôn tốt hơn một sự thật giật gân mà sai.`,
     ``,
-    `## Yêu cầu số hai: hai giây đầu tiên`,
+    `## Yêu cầu số hai: câu mở phải là chính sự thật đó`,
     ``,
-    `Cảnh đầu tiên là cái quyết định video này có được xem hay không. Câu đầu tiên`,
-    `phải NÓI THẲNG vào điều lạ - không chào hỏi, không "hôm nay chúng ta sẽ tìm`,
-    `hiểu về", không "bạn có bao giờ tự hỏi".`,
+    `Trên kênh này, câu mở đầu KHÔNG dẫn dắt vào sự thật - nó chính là sự thật,`,
+    `nói thẳng ra, ngay từ chữ đầu tiên. Không chào hỏi, không "hôm nay chúng ta`,
+    `sẽ tìm hiểu về", không "bạn có bao giờ tự hỏi".`,
     ``,
     `Tốt:   "Mật ong để ba nghìn năm vẫn ăn được."`,
     `Tốt:   "Có một loài sứa gần như không thể chết già."`,
+    `Tốt:   "Sét nóng gấp năm lần bề mặt Mặt Trời."`,
     `Tệ:    "Xin chào các bạn, hôm nay mình sẽ kể cho các bạn nghe về mật ong."`,
     `Tệ:    "Bạn có bao giờ tự hỏi tại sao mật ong lại đặc biệt không?"`,
+    `Tệ:    "Mật ong là một thứ rất đặc biệt trong tự nhiên."`,
     ``,
     `Câu mở phải tự nó đã là một thông tin. Nếu cắt bỏ mọi thứ trừ câu đầu, người`,
-    `xem vẫn học được một điều.`,
+    `xem vẫn học được một điều - và điều đó phải đủ lạ để họ dừng ngón tay lại.`,
     ``,
+    `Chọn chi tiết SỐC NHẤT của sự thật để mở, chứ không phải chi tiết dễ giải`,
+    `thích nhất. Con số vô lý nhất, cái so sánh khó tin nhất, cái nghịch lý nhất.`,
+    `Phần dễ giải thích để dành cho cảnh sau.`,
+    ``,
+    ...hookSection(shape),
     ...lengthSection(shape),
     `## Nội dung video này`,
     ``,
@@ -220,22 +229,20 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
       : [`  Không xin like, không xin đăng ký.`]),
     ``,
     ...validValuesSection(input.defaultStyle, input.defaultVoice),
-    `## Phần đăng YouTube`,
-    ``,
-    `Video được đăng dưới dạng YouTube Short, nên viết luôn phần đăng - một object`,
-    `"publish" gồm "title", "description" và "tags". Tất cả bằng tiếng Việt.`,
-    ``,
-    `- **title**: tối đa 100 ký tự, nhưng người xem chỉ thấy khoảng 60 ký tự đầu`,
-    `  trên khung Short. Nói thẳng sự thật, đúng giọng của video: "Mật ong không`,
-    `  bao giờ hỏng" là được; "SỰ THẬT SỐC VỀ MẬT ONG MÀ 99% KHÔNG BIẾT" thì`,
-    `  không. Không viết hoa toàn bộ, không emoji.`,
-    `- **description**: hai đến ba câu. Câu đầu nhắc lại sự thật, câu sau thêm một`,
-    `  chi tiết không có trong video thì càng tốt. KHÔNG viết danh sách chương và`,
-    `  KHÔNG viết dòng ghi nguồn nhạc - hệ thống tự sinh cả hai, kèm thẻ #shorts.`,
-    `- **tags**: năm đến mười hai thẻ, chữ thường, là những từ người ta thực sự`,
-    `  gõ tìm. Trộn thẻ rộng ("fact", "sự thật thú vị", "khám phá") với thẻ riêng`,
-    `  của video này ("mật ong", "ai cập cổ đại").`,
-    ``,
+    ...publishSection({
+      withholding: [
+        'Hũ mật ong ba nghìn năm tuổi vẫn ăn được',
+        'Có một loài sứa không chết già',
+        'Sét nóng hơn bề mặt Mặt Trời',
+      ],
+      givingAway: [
+        '"Mật ong không hỏng vì nó gần như không có nước"  ← đã trả lời hộ video',
+        '"Sứa Turritopsis trẻ hoá bằng cách quay về dạng polyp"  ← hết chuyện để xem',
+        '"SỰ THẬT SỐC VỀ MẬT ONG MÀ 99% KHÔNG BIẾT"  ← câu view, chẳng nêu gì cả',
+      ],
+      broadTags: ['fact', 'sự thật thú vị', 'khám phá'],
+      narrowTags: ['mật ong', 'ai cập cổ đại'],
+    }),
     `## Định dạng trả về`,
     ``,
     `Trả về DUY NHẤT một object JSON, không gì khác - không giải thích, không rào`,
@@ -254,12 +261,13 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
           imageQueries: ['honey jar', 'beehive bees', 'ancient egypt tomb'],
         },
         publish: {
-          title: 'Mật ong không bao giờ hỏng',
+          title: 'Hũ mật ong ba nghìn năm tuổi vẫn ăn được',
           description:
             'Người ta tìm được hũ mật ong ba nghìn năm tuổi trong lăng mộ Ai Cập, ' +
             'và nó vẫn ăn được.\n\n' +
             'Lý do nằm ở chỗ mật ong gần như không có nước - mà vi khuẩn thì cần ' +
-            'nước để sống.',
+            'nước mới sống nổi, nên vừa chạm vào là chúng mất nước và chết. Người ' +
+            'nuôi ong còn dùng chính tính chất đó để bảo quản vết thương.',
           tags: ['fact', 'sự thật thú vị', 'mật ong', 'khám phá', 'kiến thức'],
         },
         scenes: [
@@ -268,10 +276,8 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
             type: 'intro',
             imageQuery: 'honey jar',
             title: 'Mật ong không hỏng',
-            narration:
-              'Mật ong để ba nghìn năm vẫn ăn được - người ta mở những hũ mật chôn ' +
-              'trong lăng mộ Ai Cập ra và thấy nó vẫn còn dùng được bình thường,',
-            duration: 5,
+            narration: 'Mật ong để ba nghìn năm vẫn ăn được.',
+            duration: 3,
             animation: 'zoom-in',
             transition: 'fade',
             effect: 'none',
@@ -283,8 +289,9 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
             imageQuery: 'beehive bees',
             title: '',
             narration:
-              'và lý do nằm ở chỗ mật ong gần như không có nước, mà vi khuẩn thì ' +
-              'cần nước mới sống nổi, nên vừa chạm vào là chúng mất nước và chết.',
+              'Người ta mở những hũ mật chôn trong lăng mộ Ai Cập ra và thấy nó vẫn ' +
+              'còn dùng được bình thường, mà lý do nằm ở chỗ mật ong gần như không ' +
+              'có nước, trong khi vi khuẩn thì cần nước mới sống nổi.',
             duration: 5,
             animation: 'pan-right',
             transition: 'cut',
@@ -298,8 +305,10 @@ export function buildStoryboardPrompt(input: StoryboardPromptInput): string {
     ),
     '```',
     ``,
-    `Chú ý hai cảnh mẫu ở trên: câu của cảnh đầu chưa kết thúc, nó chạy tiếp sang`,
-    `cảnh sau. Đó chính là kiểu viết cần có.`,
+    `Chú ý hai cảnh mẫu ở trên. Cảnh mở đầu ngắn và trọn một câu - đó là ba giây`,
+    `hook. Từ cảnh thứ hai trở đi thì viết liền mạch, câu chạy tiếp sang cảnh sau`,
+    `được và nên như vậy. Và chú ý tiêu đề: nó nói hũ mật vẫn ăn được, nhưng không`,
+    `nói vì sao - phần đó nằm trong mô tả.`,
     ``,
     `Để "content.narration" là chuỗi rỗng - hệ thống tự nối lời đọc của các cảnh`,
     `lại. Mỗi "imageQuery" của cảnh phải trùng đúng một chuỗi trong`,

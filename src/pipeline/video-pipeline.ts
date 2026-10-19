@@ -27,6 +27,11 @@ import { acquireLock, releaseLock } from './lock';
 import { FileCache } from '../utils/cache';
 import { LocalDriveStorageProvider } from '../storage/local-drive.provider';
 import { RETRY_BUDGETS, withRetry } from '../utils/retry';
+import { synthesizeDialogue } from '../tts/dialogue';
+import { coveredTitlesFor, recordTopic } from './topic-ledger';
+import { availableSoundEffects } from '../audio/sfx';
+import { composeThumbnail } from './thumbnail';
+import { getTheme } from '../remotion/themes/theme';
 
 export const PIPELINE_VERSION = '1.0.0';
 
@@ -197,8 +202,16 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       }
 
       job = await updateJob(paths, job, { status: 'ANALYZING', stage: 'generate-storyboard' });
+
+      // Everything this channel has made, minus what this project itself
+      // already accounts for. See `coveredTitlesFor` for why that is two
+      // exclusions rather than one.
+      const alreadyCovered = await coveredTitlesFor(config, projectId).catch(
+        () => [] as string[],
+      );
+
       storyboard = await module.generateStoryboard(
-        { projectId, info, brief, targetDurationSec },
+        { projectId, info, brief, targetDurationSec, alreadyCovered },
         config,
         logger,
       );
@@ -210,6 +223,32 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       );
       logger.done(`Storyboard created (${storyboard.scenes.length} scenes)`);
     }
+
+    /*
+     * Recorded here rather than after the upload, and that is the point.
+     *
+     * A subject is spent the moment a script exists for it - the channel has
+     * decided to make that video, and proposing it again tomorrow is a repeat
+     * whether or not the render finished, whether or not YouTube took it, and
+     * whether or not somebody later deleted the project folder. Waiting for a
+     * successful upload would leave every failed render free to be suggested
+     * back, which is the failure this ledger exists to close.
+     *
+     * Keyed on the project, so a re-run updates its line instead of adding one.
+     */
+    await recordTopic(
+      config,
+      {
+        at: new Date().toISOString(),
+        projectId,
+        title: storyboard.project.episodeTitle,
+        summary: storyboard.content.summary,
+        youtubeUrl: '',
+      },
+      logger,
+    ).catch((err) =>
+      logger.warn(`Không ghi được sổ đề tài: ${err instanceof Error ? err.message : String(err)}`),
+    );
 
     if (options.storyboardOnly) {
       // Clears any error left over from a previous failed run, same as the
@@ -284,10 +323,55 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
         `${tts.isMock ? ', MOCK' : ''})`,
     );
 
+    /*
+     * The first point in the run where the video's real length is known.
+     *
+     * A warning rather than a failure, deliberately. The script was already
+     * gated on word count, which is the only lever anyone has - the narration
+     * is written, synthesised and correct, and the sole way to make it land
+     * inside the band now is to throw away a good script over half a second.
+     * What is left is the residual: the same words read at a slightly
+     * different pace, which across the measured catalogue varies by about
+     * three percent.
+     *
+     * So this exists to make that residual visible. A line here now and then
+     * is the system working; this line on most runs means `WORDS_PER_MINUTE`
+     * has drifted from the voice and wants re-measuring against the catalogue.
+     */
+    const { durationMin, durationMax } = config.video;
+    if (!tts.isMock && durationMax > durationMin && (tts.duration < durationMin || tts.duration > durationMax)) {
+      logger.warn(
+        `Lời đọc dài ${tts.duration.toFixed(1)}s, ngoài khung ${durationMin}-${durationMax}s của kênh. ` +
+          'Kịch bản đã qua cổng đếm từ, nên chênh lệch này là do tốc độ đọc chứ không phải độ dài ' +
+          'kịch bản - video vẫn dựng bình thường. Nếu lặp lại thường xuyên thì đo lại ' +
+          'WORDS_PER_MINUTE theo giọng đang dùng.',
+      );
+    }
+
     // ---- 6. Bundle and stage assets -------------------------------------
     const bundleLocation = await getBundle();
 
     const musicFile = await resolveMusic(config, logger);
+
+    /*
+     * Only the effects this video asks for get staged.
+     *
+     * Copying the whole folder would put every sound a channel has ever
+     * downloaded into every render bundle. The scenes name at most two.
+     */
+    const sfxFiles = new Map<string, string>();
+    if (module.sfxForScene) {
+      const onDisk = new Map((await availableSoundEffects(config.sfxDir)).map((e) => [e.id, e.file]));
+      for (const scene of storyboard.scenes) {
+        const id = module.sfxForScene(scene);
+        if (!id) continue;
+        const file = onDisk.get(id);
+        if (file) sfxFiles.set(id, file);
+        // A missing file is a warning, not a failure: the video is finished and
+        // a silent beat is a far smaller loss than a dead run.
+        else logger.warn(`Không tìm thấy tiếng động "${id}" trong ${config.sfxDir} - bỏ qua.`);
+      }
+    }
 
     // What goes into the bundle is the module's call: one copies the library's
     // whole images directory, the other names each downloaded file. See
@@ -299,8 +383,18 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
       files: {
         ...resolved.staging.files,
         ...(musicFile ? { [`music/${path.basename(musicFile)}`]: musicFile } : {}),
+        ...Object.fromEntries(
+          [...sfxFiles].map(([id, file]) => [`sfx/${id}${path.extname(file)}`, file]),
+        ),
       },
     });
+
+    const stagedSfx = new Map(
+      [...sfxFiles].map(([id, file]) => [
+        id,
+        assetSrc(staged.publicPrefix, 'sfx', `${id}${path.extname(file)}`),
+      ]),
+    );
 
     try {
       // ---- 7. Timeline ---------------------------------------------------
@@ -311,6 +405,11 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
         coverTolerance: module.coverTolerance,
         buildCaptions: module.buildCaptions,
         backdrops,
+        ...(module.stageFor ? { stageFor: module.stageFor } : {}),
+        sfxSrcFor: (scene) => {
+          const id = module.sfxForScene?.(scene) ?? null;
+          return id ? (stagedSfx.get(id) ?? null) : null;
+        },
         voiceSrc: assetSrc(staged.publicPrefix, 'audio', path.basename(tts.audioPath)),
         voiceDurationSec: tts.duration,
         words: tts.words,
@@ -396,6 +495,36 @@ export async function runPipeline(options: RunPipelineOptions): Promise<Pipeline
           frame,
         });
         thumbnails.push(name);
+      }
+
+      /*
+       * The first thumbnail becomes a designed cover, when the module asked
+       * for one.
+       *
+       * Overwritten in place rather than added alongside, because the uploader
+       * sets `thumbnails[0]` and a cover that is not the one uploaded is a
+       * cover nobody sees. The raw frames stay as the alternates - the reason
+       * three are taken in the first place is that a cover is a choice, and a
+       * person may prefer a different picture underneath the same words.
+       */
+      const coverText = storyboard.publish?.thumbnailText?.trim();
+      if (coverText && thumbnails.length > 0) {
+        const cover = path.join(paths.output, thumbnails[0]!);
+        await composeThumbnail({
+          sourcePath: cover,
+          text: coverText,
+          kicker: storyboard.publish?.thumbnailKicker?.trim() || undefined,
+          accent: getTheme(timeline.style, timeline.module).colors.captionHighlight,
+          outputPath: cover,
+        }).catch((err) => {
+          // A cover that would not draw is not worth losing a rendered video
+          // over: the frame underneath is already written and still uploads.
+          logger.warn(
+            `Không vẽ được ảnh bìa: ${err instanceof Error ? err.message : String(err)}. ` +
+              'Dùng khung hình gốc.',
+          );
+        });
+        logger.done(`Ảnh bìa: "${coverText}"`);
       }
 
       // ---- 8. Validate ---------------------------------------------------
@@ -600,6 +729,50 @@ async function synthesize(args: {
     args.module.pacing,
     args.module.ttsTimeoutMs,
   );
+
+  /*
+   * A module that assigns a voice per scene is asking for a conversation.
+   *
+   * Branching here rather than inside the module keeps every other pipeline on
+   * exactly the code it was on before - no module without `voiceForScene` can
+   * reach a line of this. The cache below is deliberately skipped: it is keyed
+   * on one text and one voice, and a dialogue has neither. Re-renders are
+   * covered by `--reuse-voice`, which finds the finished voice.mp3 and never
+   * calls a synthesiser at all.
+   */
+  const voiceForScene = args.module.voiceForScene;
+  if (voiceForScene) {
+    const dialogue = await synthesizeDialogue({
+      provider,
+      lines: storyboard.scenes.map((scene) => ({
+        id: scene.id,
+        text: scene.narration,
+        voice: voiceForScene(scene),
+      })),
+      language: 'vi-VN',
+      rate: config.tts.rate,
+      pitch: config.tts.pitch,
+      volume: config.tts.volume,
+      outDir: paths.audio,
+      outputPath: paths.voiceMp3,
+      logger,
+    });
+
+    await writeFile(
+      path.join(paths.audio, 'words.json'),
+      `${JSON.stringify(dialogue.words, null, 2)}\n`,
+      'utf8',
+    );
+
+    return {
+      audioPath: dialogue.audioPath,
+      captionsPath: paths.captionsSrt,
+      duration: dialogue.duration,
+      words: dialogue.words,
+      isMock: args.useMockTts || config.tts.engine === 'mock',
+      voice: dialogue.voices.join(' + '),
+    };
+  }
 
   /**
    * Configuration decides the voice; the storyboard only records it.

@@ -5,13 +5,10 @@ import { PODCAST_PACING } from './pacing';
 import { BriefSchema, targetSecondsOf, type Brief } from './domain/brief';
 import { StoryboardSchema, type Storyboard } from './domain/storyboard';
 import type { Scene } from './domain/scene';
-import { generateStoryboard as generate } from './storyboard-provider';
-import { resolveBackdrops, resolveEnvironments } from './backdrops';
+import { generateStoryboard } from './storyboard-provider';
+import { resolveBackdrops } from './backdrops';
 import { buildCaptions } from './captions';
-import { readLibrary, assertLibraryReady } from './image/library';
-import { COMFORTABLE_ENVIRONMENTS } from '../../domain/project';
 import { ERROR_CODES, PipelineError } from '../../domain/errors';
-import { libraryPaths } from '../../config/env';
 import { isEnglishVoice } from '../../tts/types';
 
 /**
@@ -27,11 +24,20 @@ export const podcastModule: VideoModule<Brief, Scene, Storyboard> = {
   pacing: PODCAST_PACING,
 
   /**
-   * A landscape frame and a landscape library, so this is rarely exercised - and
-   * when it is, the interface has promised the user that an off-ratio photograph
-   * is blurred at the sides rather than cropped into.
+   * Raised from 1.35 when this module started searching for its backdrops.
+   *
+   * 1.35 was right for a hand-uploaded library of landscape photographs, where
+   * an off-ratio picture was rare and the interface had promised to letterbox
+   * it rather than crop into it. There is no interface promising that any more,
+   * and searched results are off-ratio constantly - the first episode rendered
+   * this way had two scenes showing a portrait photograph shrunk into the middle
+   * of the frame with grey either side, which reads as a broken video.
+   *
+   * Lower than the shorts modules' 4.0, because the ranking now prefers
+   * landscape photographs for a landscape frame (see `cropCost`), so this only
+   * has to catch what is left rather than carry the whole problem.
    */
-  coverTolerance: 1.35,
+  coverTolerance: 2.4,
 
   /** An hour. Purely a runaway guard - a ten minute episode is the point here. */
   outputDurationGuard: { minSeconds: 30, maxSeconds: 3600 },
@@ -80,52 +86,17 @@ export const podcastModule: VideoModule<Brief, Scene, Storyboard> = {
    * pictures exist first and the script is written to them; in the fact module
    * the script is written first and the pictures are found to match.
    */
-  async generateStoryboard(input, config, logger) {
-    const paths = libraryPaths(config.libraryDir);
-    const library = await readLibrary(paths);
-    assertLibraryReady(library);
-
-    const chosen = resolveEnvironments(library.environment, input.brief, logger);
-
-    logger.done(
-      `Library ready (${chosen.length} backdrop(s) in play` +
-        `${chosen.length === library.counts.environment ? '' : ` of ${library.counts.environment}`})`,
-    );
-
-    // Not fatal: a small library still renders, it just shows the same
-    // photograph several times over a ten minute episode. Said before the
-    // Claude call rather than after the render, since that is when it can still
-    // be acted on.
-    if (chosen.length < COMFORTABLE_ENVIRONMENTS) {
-      logger.warn(
-        `Only ${chosen.length} backdrop(s) available to this episode; ${COMFORTABLE_ENVIRONMENTS} ` +
-          'or more keeps a long one from looking like the same picture on repeat.',
-      );
-    }
-
-    return generate(
-      { ...input, assets: { environment: chosen }, previewDir: paths.preview },
-      config,
-      logger,
-    );
-  },
+  generateStoryboard,
 
   /**
-   * Looks at the photographs before proposing a subject.
+   * Proposes a subject from the project's name, not from a shelf of pictures.
    *
-   * The library *is* what an episode can be about, so reading it is the whole
-   * job - and the module does that reading itself. It used to be done by the
-   * CLI, which meant the CLI had to know that one of the two modules keeps a
-   * library of previews on disk.
+   * This is the change that most distinguishes the module from what it was.
+   * The library used to be read *before* anything was written, because the
+   * photographs were what an episode could be about; every other module writes
+   * first and finds pictures afterwards, and now this one does too.
    */
-  suggestBrief: async (config, logger, input) => {
-    const paths = libraryPaths(config.libraryDir);
-    return suggestBrief(config, logger, {
-      previewDir: paths.preview,
-      assets: { environment: (await readLibrary(paths)).environment },
-      info: input.info,
-    });
-  },
+  suggestBrief,
 
   registerCommands: registerPodcastCommands,
 
@@ -133,11 +104,13 @@ export const podcastModule: VideoModule<Brief, Scene, Storyboard> = {
   buildCaptions,
 
   /**
-   * The chosen backdrops go into the hash.
+   * Nothing extra.
    *
-   * Without them, narrowing a project's selection would change which
-   * photographs the next script may use while leaving the hash untouched - so
-   * the run would report "already up to date" and leave the old video in place.
+   * The backdrop selection used to live here: narrowing a project's shortlist
+   * changed which photographs the next script could use without changing the
+   * storyboard, so the hash had to carry it or a re-run would report "already
+   * up to date". There is no shortlist any more - the queries live inside the
+   * storyboard, so the storyboard's own hash covers them.
    */
-  hashInputs: ({ brief }) => ({ environments: (brief?.environments ?? []).join(',') }),
+  hashInputs: () => ({}),
 };

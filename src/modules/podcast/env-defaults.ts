@@ -13,6 +13,20 @@
  * here would make that a cycle.
  */
 export const PODCAST_ENV_DEFAULTS: Record<string, string> = {
+  /*
+   * The podcast searches for its backdrops now, like every other module. It
+   * used to read a library somebody filled by hand, which is why these keys
+   * were absent - and why an episode could only be about what had already been
+   * photographed.
+   *
+   * The fallback is deliberately atmospheric rather than literal. A short's
+   * fallback stands in for a missing object; an episode's stands in for a
+   * missing *mood*, and a quiet empty room is a better nothing than a texture.
+   */
+  STOCK_DIR: './runtime/podcast/stock',
+  STOCK_SOURCES: 'flickr,wikimedia,inaturalist,stocksnap,rawpixel,nappy,geographorguk,nasa',
+  STOCK_FALLBACK_QUERY: 'quiet empty room window light',
+
   DRIVE_ROOT: './workspace/podcast',
   LIBRARY_DIR: './runtime/podcast/library',
 
@@ -34,5 +48,15 @@ export const PODCAST_ENV_DEFAULTS: Record<string, string> = {
   YOUTUBE_TITLE_PREFIX: '[Eng + Vietsub] ',
   /** 22 is "People & Blogs". */
   YOUTUBE_CATEGORY_ID: '22',
-  SCHEDULE_INTERVAL_HOURS: '8',
+  /**
+   * One episode a day.
+   *
+   * Not a throttle like the shorts channels', where four hours exists to keep
+   * a busy queue under YouTube's daily upload cap. Here it is editorial: an
+   * episode runs five to ten minutes, and three of those a day is more than
+   * anyone subscribes for. Note what this does and does not do - it spaces
+   * *publishing*, while the upload itself happens the moment a render
+   * finishes.
+   */
+  SCHEDULE_INTERVAL_HOURS: '24',
 };

@@ -1,18 +1,20 @@
 import {
   StoryboardDraftSchema,
   checkStoryboardStructure,
+  lengthBandFrom,
   type Storyboard,
   type StoryboardDraft,
 } from './domain/storyboard';
 import type { Brief } from './domain/brief';
 import { countWords, narrationFromScenes } from '../../domain/storyboard';
 import { ERROR_CODES, PipelineError } from '../../domain/errors';
+import { findSimilarTopic } from '../../pipeline/topic-ledger';
 import type { AppConfig } from '../../config/env';
 import type { Logger } from '../../utils/logger';
 import { callClaude, extractJson } from '../../ai/claude-runner';
 import { checkFacts } from '../../ai/fact-guard';
 import { factGuardLanguage } from './fact-guard-lang';
-import { targetWordsFor } from './pacing';
+import { hookBudget, targetWordsFor } from './pacing';
 import type { ShortsPrompts } from './prompts';
 import { buildRetryPrompt } from './prompt-parts';
 import { languageOf } from '../../tts/types';
@@ -75,6 +77,10 @@ export function makeGenerateStoryboard(prompts: ShortsPrompts) {
   logger: Logger,
 ): Promise<Storyboard> {
   const basePrompt = prompts.buildStoryboardPrompt({
+    durationBandSec: {
+      minSeconds: config.video.durationMin,
+      maxSeconds: config.video.durationMax,
+    },
     projectId: input.projectId,
     workingTitle: input.info?.name ?? input.projectId,
     info: input.info,
@@ -86,6 +92,21 @@ export function makeGenerateStoryboard(prompts: ShortsPrompts) {
   });
 
   const targetWords = targetWordsFor(input.targetDurationSec);
+
+  /*
+   * The length band, taken from the channel's own configuration rather than
+   * from a constant. `VIDEO_DURATION_MIN` and `VIDEO_DURATION_MAX` used to be
+   * dead keys here - written into both env files, read into `AppConfig`, and
+   * consulted by nothing on this pipeline. They are the band now, which means
+   * a channel that wants a different one edits `.env.<module>` instead of this
+   * file.
+   */
+  const band = lengthBandFrom(
+    config.video.targetDuration,
+    config.video.durationMin,
+    config.video.durationMax,
+  );
+  const hook = hookBudget();
 
   let prompt = basePrompt;
   let lastProblem = 'unknown';
@@ -115,11 +136,30 @@ export function makeGenerateStoryboard(prompts: ShortsPrompts) {
       continue;
     }
 
-    const structural = checkStoryboardStructure(parsed.data, targetWords);
+    const structural = checkStoryboardStructure(parsed.data, targetWords, { band, hook });
     if (structural.length > 0) {
       lastProblem = structural.map((p) => `- ${p}`).join('\n');
       logger.warn(`Storyboard failed structural checks:\n${lastProblem}`);
       prompt = buildRetryPrompt(basePrompt, `Lỗi cấu trúc:\n${lastProblem}`);
+      continue;
+    }
+
+    /*
+     * The duplicate gate.
+     *
+     * Last of the checks and deliberately so: it is the only one that needs to
+     * know about videos other than this one, and there is no point asking
+     * whether a script repeats itself before knowing it is a valid script at
+     * all. Fed back like every other violation, so the model rewrites rather
+     * than the run dying.
+     */
+    const repeat = findSimilarTopic(parsed.data.project.episodeTitle, input.alreadyCovered);
+    if (repeat) {
+      lastProblem =
+        `Đề tài "${parsed.data.project.episodeTitle}" trùng với video kênh đã làm: ` +
+        `"${repeat}". Chọn một đề tài khác hẳn, đừng viết lại cùng một chuyện bằng câu khác.`;
+      logger.warn(lastProblem);
+      prompt = buildRetryPrompt(basePrompt, lastProblem);
       continue;
     }
 
@@ -137,7 +177,10 @@ export function makeGenerateStoryboard(prompts: ShortsPrompts) {
     logger.done(
       `Script accepted: ${parsed.data.scenes.length} scenes, ` +
         `${countWords(narrationFromScenes(parsed.data))} words ` +
-        `(target ${targetWords})${facts.applied ? '' : ', fact guard not applied (no info.json)'}`,
+        `(target ${targetWords}, accepted ${Math.ceil(targetWords * band.shortfall)}-` +
+        `${Math.floor(targetWords * band.overrun)}), hook ` +
+        `${countWords(parsed.data.scenes[0]?.narration ?? '')} words` +
+        `${facts.applied ? '' : ', fact guard not applied (no info.json)'}`,
     );
 
     return toStoryboard(parsed.data, input.targetDurationSec, config);

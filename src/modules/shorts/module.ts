@@ -7,7 +7,7 @@ import type { Scene } from './domain/scene';
 import { makeGenerateStoryboard } from './storyboard-provider';
 import { makeSuggestBrief } from './suggest-brief';
 import { registerShortsCommands } from './cli';
-import { resolveBackdrops } from './backdrops';
+import { resolveSearchedBackdrops } from './backdrops';
 import { buildCaptions } from './captions';
 import type { ShortsPrompts } from './prompts';
 import { SHORTS_MAX_SECONDS } from '../../domain/config';
@@ -56,7 +56,7 @@ export function makeShortsModule(channel: ShortsChannel): VideoModule<Brief, Sce
    * job rather than the validator's. */
   outputDurationGuard: { minSeconds: 8, maxSeconds: 300 },
 
-  /** Two minutes, far above the tail for forty-five seconds of speech, and still
+  /** Two minutes, far above the tail for thirty seconds of speech, and still
    * bounded - the queue here is dozens of videos long, so a hung call parking it
    * is the risk worth guarding. */
   ttsTimeoutMs: 120_000,
@@ -117,7 +117,15 @@ export function makeShortsModule(channel: ShortsChannel): VideoModule<Brief, Sce
   },
 
   resolveBackdrops: ({ storyboard, config, logger }) =>
-    resolveBackdrops({ storyboard, config, logger }),
+    resolveSearchedBackdrops({
+      scenes: storyboard.scenes.map((scene) => ({
+        id: scene.id,
+        narration: scene.narration,
+        imageQuery: scene.imageQuery,
+      })),
+      config,
+      logger,
+    }),
   buildCaptions,
 
   /**

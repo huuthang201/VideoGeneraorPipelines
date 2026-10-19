@@ -122,7 +122,30 @@ export async function renderThumbnail(input: {
   outputPath: string;
   frame?: number;
 }): Promise<string> {
-  const inputProps = { timeline: input.timeline };
+  /*
+   * The picture without the words on it.
+   *
+   * A still lifted straight out of the composition arrives with a subtitle
+   * across the bottom and, if the frame happens to sit at the top of a scene, a
+   * heading over the middle. As a cover that is unusable twice over: it reads
+   * as a screenshot rather than as a designed image, and the words it carries
+   * are a fragment of a sentence chosen by where the frame fell.
+   *
+   * Stripping them here rather than adding a prop to the composition keeps the
+   * renderer the only thing that knows a still is not a frame of video. Scene
+   * durations are untouched, so the frame index the caller computed still
+   * points at the same moment.
+   */
+  const inputProps = {
+    timeline: {
+      ...input.timeline,
+      scenes: input.timeline.scenes.map((scene) => ({
+        ...scene,
+        captionPages: [],
+        title: '',
+      })),
+    },
+  };
 
   const composition = await selectComposition({
     serveUrl: input.bundleLocation,

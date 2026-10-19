@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { isPodcast, type RunState, type RunStep, type StepId, type StepStatus } from '@/lib/api';
+import type { RunState, RunStep, StepId, StepStatus } from '@/lib/api';
 import { formatDuration } from './StepPanel';
 
 /**
@@ -36,10 +36,9 @@ import { formatDuration } from './StepPanel';
  * only has to answer *where are we*. A node and a label answers that in a
  * quarter of the width, so the whole run fits without scrolling.
  *
- * Labels live here rather than on the server because they are per module and
- * they are interface copy: the podcast picks a photograph out of a library the
- * user uploaded, the fact short goes and searches for one. Same step id, two
- * honest descriptions.
+ * Labels live here rather than on the server because they are interface copy.
+ * Every module searches for its photographs now, so the two step labels that
+ * used to differ - "chọn ảnh" against "tìm ảnh" - have become one.
  */
 
 interface StepMeta {
@@ -62,14 +61,14 @@ function stepMeta(id: StepId): StepMeta {
     return {
       label: 'Ý tưởng',
       icon: LightbulbIcon,
-      hint: isPodcast() ? 'Đang xem thư viện ảnh…' : 'Đang nghĩ đề tài…',
+      hint: 'Đang nghĩ đề tài…',
     };
   }
   if (id === 'images') {
     return {
-      label: isPodcast() ? 'Chọn ảnh' : 'Tìm ảnh',
+      label: 'Tìm ảnh',
       icon: ImageIcon,
-      hint: isPodcast() ? 'Đang lấy ảnh…' : 'Đang tìm ảnh…',
+      hint: 'Đang tìm ảnh…',
     };
   }
   return COMMON[id];

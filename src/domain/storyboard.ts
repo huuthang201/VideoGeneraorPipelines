@@ -46,6 +46,22 @@ export const PublishMetaSchema = z.strictObject({
   description: z.string().min(1).max(4000),
   /** YouTube counts these against a 500-character total. */
   tags: z.array(z.string().min(1)).max(20).default([]),
+  /**
+   * Three to six words drawn across the cover image.
+   *
+   * Not the title. The title is read *next to* the cover, so repeating it
+   * spends the one piece of visual space a video has on words the viewer is
+   * already reading. The cover says the thing the title cannot: the single
+   * most arresting true detail, big enough to survive a search result at two
+   * hundred pixels wide.
+   *
+   * Optional, and empty means the cover is a plain frame - which is what every
+   * Short gets, because the Shorts feed plays the video instead of showing a
+   * cover and the picture barely matters there.
+   */
+  thumbnailText: z.string().max(80).default(''),
+  /** A shorter second line under it, in the channel's accent colour. */
+  thumbnailKicker: z.string().max(60).default(''),
 });
 export type PublishMeta = z.infer<typeof PublishMetaSchema>;
 

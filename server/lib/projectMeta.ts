@@ -7,6 +7,15 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
  * Kept separate from job.json (whose zod schema is `strictObject` and would
  * reject an extra field) rather than asking the engine to know about it.
  */
+/**
+ * The name a project carries while Claude is still choosing its subject.
+ *
+ * Shared rather than written out twice: the create route puts it on, and the
+ * runner takes it off once the brief lands. Two copies of the same string in
+ * two files is how a rename silently stops happening.
+ */
+export const PENDING_TOPIC_NAME = 'Đang nghĩ đề tài…';
+
 export interface ProjectMeta {
   displayName: string;
   createdAt: string;

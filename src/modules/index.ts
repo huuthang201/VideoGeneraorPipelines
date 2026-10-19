@@ -3,6 +3,8 @@ import type { SceneLike, StoryboardLike, VideoModule } from './contract';
 import { podcastModule } from './podcast';
 import { factModule } from './fact';
 import { psychModule } from './psych';
+import { cartoonModule } from './cartoon';
+import { factlongModule } from './factlong';
 import type { BaseBrief } from '../domain/brief';
 
 export type { VideoModule, SceneLike, StoryboardLike } from './contract';
@@ -10,10 +12,13 @@ export type { VideoModule, SceneLike, StoryboardLike } from './contract';
 /**
  * The registry.
  *
- * Three channels in one repository. Two of them - `fact` and `psych` - are the
- * same pipeline with different writing, and share everything under
- * `modules/shorts`; the podcast is a genuinely different shape. See
- * `contract.ts` for what a module owns and why.
+ * Five entries, four channels. `fact` and `psych` are the same pipeline with
+ * different writing and share everything under `modules/shorts`; `factlong`
+ * publishes to the *same channel* as `fact` and is separate for the opposite
+ * reason - same channel, different machine, because seventeen minutes cannot be
+ * written in one Claude call. See `contract.ts` for what a module owns, and
+ * `factlong/index.ts` for why that one is the exception to "a module is a
+ * channel".
  *
  * The type is deliberately widened here: each module is strongly typed in terms
  * of its own brief, scene and storyboard, and the shared pipeline sees only the
@@ -26,6 +31,8 @@ const MODULES = {
   podcast: podcastModule as unknown as AnyVideoModule,
   fact: factModule as unknown as AnyVideoModule,
   psych: psychModule as unknown as AnyVideoModule,
+  cartoon: cartoonModule as unknown as AnyVideoModule,
+  factlong: factlongModule as unknown as AnyVideoModule,
 } satisfies Record<ModuleId, AnyVideoModule>;
 
 export function getModule(id: ModuleId): AnyVideoModule {

@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLinkIcon, Loader2Icon } from 'lucide-react';
 import {
+  MODULE,
   api,
   isPodcast,
   type Brief,
@@ -17,16 +18,21 @@ import {
   type VoiceData,
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { ActionMark, Button, useActionPhase } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { detectSources } from '@/lib/sources';
+import { SourceList } from '@/components/SourceList';
 
 /** What `BriefBody` may change. A subset of Brief - it never touches images. */
-type BriefPatch = Pick<Brief, 'context' | 'hook' | 'targetMinutes' | 'targetSeconds'>;
+type BriefPatch = Pick<
+  Brief,
+  'context' | 'hook' | 'targetMinutes' | 'targetSeconds' | 'sourceImagesPermitted'
+>;
 
 /**
  * What sits under the pipeline row when a box is opened.
@@ -110,8 +116,16 @@ function BriefBody({
   editable: boolean;
   disabled: boolean;
   defaultTargetSeconds: number | null;
-  onSave: (patch: Partial<BriefPatch>) => void;
+  onSave: (patch: Partial<BriefPatch>) => Promise<boolean>;
 }) {
+  const [draft, setDraft] = useState(data?.context ?? '');
+  const sources = useMemo(() => detectSources(draft), [draft]);
+  // Held here rather than read from `data`: this panel fetched the brief once
+  // and does not re-read it after a save, so a checkbox bound to `data` would
+  // spring back the moment it was ticked.
+  const [permitted, setPermitted] = useState(Boolean(data?.sourceImagesPermitted));
+  const permission = useActionPhase();
+
   if (!editable) {
     if (!data?.context && !data?.hook) {
       return <Empty>Chưa có nội dung. Bấm Bắt đầu để Claude tự nghĩ.</Empty>;
@@ -135,32 +149,71 @@ function BriefBody({
   }
 
   const podcast = isPodcast();
+  const long = MODULE === 'factlong';
 
   return (
     <div className="flex flex-col gap-3">
       <p className="text-muted-foreground text-xs">
         {podcast
-          ? 'Để trống thì khi bấm Bắt đầu, Claude sẽ tự nhìn thư viện ảnh và nghĩ chủ đề.'
+          ? 'Để trống thì khi bấm Bắt đầu, Claude sẽ tự nghĩ chủ đề.'
           : 'Để trống thì khi bấm Bắt đầu, Claude sẽ tự nghĩ một sự thật theo tên dự án.'}
       </p>
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="step-context">
-          {podcast ? 'Chủ đề (lời đọc bằng tiếng Anh)' : 'Sự thật muốn kể (giọng nam miền Bắc)'}
+          {podcast
+            ? 'Chủ đề (lời đọc bằng tiếng Anh)'
+            : long
+              ? 'Ý tưởng - mô tả video và dán link nguồn'
+              : 'Sự thật muốn kể (giọng nam miền Bắc)'}
         </Label>
         <Textarea
           id="step-context"
-          rows={4}
+          rows={long ? 8 : 4}
           defaultValue={data?.context ?? ''}
           disabled={disabled}
-          onBlur={(e) => onSave({ context: e.target.value })}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => void onSave({ context: e.target.value })}
           placeholder={
             podcast
               ? "VD: A slow walk through Hanoi's Old Quarter before sunrise"
-              : 'VD: Mật ong không bao giờ hỏng, vì gần như không có nước nên vi khuẩn không sống được'
+              : long
+                ? 'VD: Video về đợt ngập ở Hà Nội đêm 16-17/9, bám sát diễn biến và công tác cứu hộ. Nguồn: https://…'
+                : 'VD: Mật ong không bao giờ hỏng, vì gần như không có nước nên vi khuẩn không sống được'
           }
         />
       </div>
+
+      {long && (
+        <SourceList sources={sources} permitted={permitted} />
+      )}
+
+      {long && sources.some((source) => !source.images) && (
+        <label className="flex cursor-pointer items-start gap-2 text-xs leading-relaxed">
+          <input
+            type="checkbox"
+            className="accent-primary mt-0.5 size-4 shrink-0"
+            checked={permitted}
+            disabled={disabled || permission.phase === 'pending'}
+            onChange={(e) => {
+              const next = e.target.checked;
+              setPermitted(next);
+              permission.track(
+                onSave({ sourceImagesPermitted: next }).then((ok) => {
+                  if (ok) return;
+                  setPermitted(!next);
+                  throw new Error('not saved');
+                }),
+              );
+            }}
+          />
+          <span>
+            Tôi đã được các toà soạn trên cho phép dùng ảnh của họ trong video này. Ảnh sẽ được
+            giữ nguyên gốc - không cắt, không hiệu ứng - và ghi nguồn ở góc phải màn hình.
+          </span>
+          <ActionMark phase={permission.phase} className="text-primary" />
+        </label>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="step-hook">
@@ -171,7 +224,7 @@ function BriefBody({
           rows={2}
           defaultValue={data?.hook ?? ''}
           disabled={disabled}
-          onBlur={(e) => onSave({ hook: e.target.value })}
+          onBlur={(e) => void onSave({ hook: e.target.value })}
         />
       </div>
 
@@ -184,9 +237,9 @@ function BriefBody({
           type="number"
           className="w-40"
           disabled={disabled}
-          min={podcast ? 1 : 15}
-          max={podcast ? 20 : 90}
-          step={podcast ? 1 : 5}
+          min={podcast ? 1 : long ? 300 : 15}
+          max={podcast ? 20 : long ? 2400 : 90}
+          step={podcast ? 1 : long ? 60 : 5}
           defaultValue={
             podcast
               ? (data?.targetMinutes ?? '')
@@ -195,7 +248,7 @@ function BriefBody({
           onBlur={(e) => {
             const n = Number(e.target.value);
             if (!Number.isFinite(n) || n <= 0) return;
-            onSave(podcast ? { targetMinutes: n } : { targetSeconds: n });
+            void onSave(podcast ? { targetMinutes: n } : { targetSeconds: n });
           }}
         />
       </div>
@@ -607,7 +660,7 @@ export function StepPanel({
   editable: boolean;
   disabled: boolean;
   defaultTargetSeconds: number | null;
-  onSaveBrief: (patch: Partial<BriefPatch>) => void;
+  onSaveBrief: (patch: Partial<BriefPatch>) => Promise<boolean>;
   onClose: () => void;
 }) {
   const [detail, setDetail] = useState<StepDetail | null>(null);

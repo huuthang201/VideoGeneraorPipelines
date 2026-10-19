@@ -7,6 +7,7 @@ import type { AppConfig } from '../config/env';
 import type { Logger } from '../utils/logger';
 import type { WordTiming } from '../tts/types';
 import type { SceneBackdrop } from '../pipeline/build-timeline';
+import type { TimelineStage } from '../domain/timeline';
 import type { Command } from 'commander';
 
 /**
@@ -40,7 +41,16 @@ export interface SceneLike {
   title: string;
   narration: string;
   duration: number;
-  animation:
+  /**
+   * Camera move on the backdrop. Optional, because a drawn scene has no camera.
+   *
+   * These three became optional when the cartoon pipeline arrived. Panning
+   * across a backdrop made of four shapes reveals that it is four shapes, and
+   * dust drifting over a drawing reads as dirt on the lens - so rather than the
+   * cartoon scene carrying three fields it always sets to "none", they are
+   * absent from its schema and the timeline builder supplies the constant.
+   */
+  animation?:
     | 'none'
     | 'drift'
     | 'zoom-in'
@@ -50,8 +60,8 @@ export interface SceneLike {
     | 'pan-up'
     | 'pan-down';
   transition: 'fade' | 'cut';
-  effect: 'none' | 'vignette';
-  overlay: 'none' | 'dust' | 'bokeh' | 'rain' | 'light-sweep';
+  effect?: 'none' | 'vignette';
+  overlay?: 'none' | 'dust' | 'bokeh' | 'rain' | 'light-sweep';
 }
 
 /** The storyboard fields the shared pipeline actually touches. */
@@ -83,6 +93,15 @@ export interface GenerateStoryboardInput<B> {
    * and `regenerate-content`) cannot disagree about it.
    */
   targetDurationSec: number;
+  /**
+   * Titles this channel has already covered, for the duplicate gate.
+   *
+   * Passed in rather than read here because the check belongs inside each
+   * module's retry loop: a repeat caught there is fed back and rewritten for
+   * the price of one more call, while a repeat caught after generation would
+   * mean throwing the whole storyboard away.
+   */
+  alreadyCovered: readonly string[];
 }
 
 /** What the image stage returns. */
@@ -260,6 +279,38 @@ export interface VideoModule<
     logger: Logger;
     brief: B | null;
   }): Promise<ResolvedBackdrops>;
+
+  /**
+   * The drawn stage for a scene, for a pipeline that photographs nothing.
+   *
+   * Present or absent, never both with `resolveBackdrops` doing real work: a
+   * scene either was shot against a photograph or was drawn. The pipeline hands
+   * whichever it gets to the same timeline builder, because the timing
+   * arithmetic is identical and *the timeline is the only source of truth for
+   * timing* - a second copy of it is a second copy that can drift.
+   */
+  stageFor?(scene: S): TimelineStage;
+
+  /**
+   * Which voice speaks this scene, for a pipeline where characters talk.
+   *
+   * Absent means one narrator reads the whole script in one TTS call, which is
+   * what every module did until a cartoon needed four. Present means the script
+   * is synthesised line by line and stitched - see `src/tts/dialogue.ts`.
+   *
+   * A function of the scene rather than a map, because what decides the voice
+   * is the scene's own `speaker` field, and only the module knows that field
+   * exists.
+   */
+  voiceForScene?(scene: S): string;
+
+  /**
+   * A sound effect for this scene, named by id, or null.
+   *
+   * The id is resolved to a file by the pipeline, which is also what stages it
+   * into the render bundle. The module only decides *whether* and *which*.
+   */
+  sfxForScene?(scene: S): string | null;
 
   /** Turn a scene's measured words into subtitle pages. */
   buildCaptions(input: {

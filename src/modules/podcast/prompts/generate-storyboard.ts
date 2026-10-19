@@ -1,6 +1,5 @@
 import type { ProductInfo } from '../../../domain/project';
 import type { Brief } from '../domain/brief';
-import type { AvailableAssets } from '../domain/storyboard';
 import {
   ANIMATIONS,
   SCENE_EFFECTS,
@@ -8,8 +7,8 @@ import {
   SCENE_TYPES,
   TRANSITIONS,
 } from '../../../domain/scene';
-import { MAX_NARRATION_CHARS } from '../domain/scene';
-import { MAX_SCENES } from '../domain/storyboard';
+import { MAX_IMAGE_QUERY_CHARS, MAX_NARRATION_CHARS } from '../domain/scene';
+import { MAX_IMAGE_QUERIES, MIN_IMAGE_QUERIES, MAX_SCENES } from '../domain/storyboard';
 import { STYLES } from '../../../domain/config';
 import { WORDS_PER_MINUTE } from '../pacing';
 import { ENGLISH_VOICES } from '../../../tts/types';
@@ -44,10 +43,6 @@ export interface PromptInput {
   /** Falls back to the project id when nothing better is known yet. */
   workingTitle: string;
   info: ProductInfo | null;
-  /** The backdrops the storyboard may use. */
-  assets: AvailableAssets;
-  /** The shared library's preview root - holds one sub-folder per kind. */
-  previewDir: string;
   targetDurationSec: number;
   defaultStyle: string;
   defaultVoice: string;
@@ -77,7 +72,6 @@ export function buildStoryboardPrompt(input: PromptInput): string {
     Math.max(4, Math.round(input.targetDurationSec / SECONDS_PER_SCENE)),
   );
   const wordsPerScene = Math.round(targetWords / sceneCount);
-  const backdrops = input.assets.environment;
 
   return [
     `You are writing one episode of a gentle English-language podcast, delivered`,
@@ -145,20 +139,45 @@ export function buildStoryboardPrompt(input: PromptInput): string {
     ``,
     `## The photographs`,
     ``,
-    `The backdrop library is shared by every project - it is not a set of`,
-    `pictures taken for this episode. Choose the ones that suit what you are`,
-    `saying; you do not have to use all of them.`,
+    `You are not choosing from a library. There is no library. The engine will`,
+    `search an openly-licensed stock archive using the exact phrases you write`,
+    `here, and shoot the episode against whatever comes back.`,
     ``,
-    `Read every image in this folder with the Read tool before you write:`,
-    `  ${input.previewDir}/environment`,
+    `So declare ${MIN_IMAGE_QUERIES}-${MAX_IMAGE_QUERIES} search phrases in "content.imageQueries", and give every scene`,
+    `one of them in its "imageQuery" field.`,
     ``,
-    `Available backdrops (use these exact filenames in "environment"):`,
-    ...(backdrops.length > 0 ? backdrops.map((f) => `  - ${f}`) : ['  (none)']),
+    `### Writing a phrase that finds photographs`,
     ``,
-    `Change the picture as the subject changes, and let a picture come back later`,
-    `if the episode returns to that idea. What you must not do is hold one`,
-    `photograph across the whole episode - at this length that reads as a broken`,
-    `video rather than as a stylistic choice.`,
+    `- **English, always.** Every open stock archive is indexed in English; a`,
+    `  Vietnamese phrase returns almost nothing.`,
+    `- **Two to four words**, at most ${MAX_IMAGE_QUERY_CHARS} characters. "rain on window" finds`,
+    `  hundreds; "the quiet melancholy of a Hanoi afternoon" finds none.`,
+    `- **Name what is VISIBLE**, not what it means. An archive is indexed by what`,
+    `  is in the frame. "loneliness" returns nothing usable; "empty bench park"`,
+    `  returns the picture you actually wanted.`,
+    `- **Avoid words that narrow the camera**: "closeup", "macro", "detail of".`,
+    `  Open archives have very few of those.`,
+    `- **Beware ambiguous English.** Archives are full of commercial photography,`,
+    `  so the everyday sense wins: "crane" is a machine before it is a bird.`,
+    `  Pin it with one extra word - "crane bird", "seal animal".`,
+    `- **One subject noun plus at most one pinning word.** Result counts fall off`,
+    `  a cliff with each word added: "hamster" finds sixteen, "rat gnawing wood"`,
+    `  finds none - and a query that finds nothing means those scenes borrow a`,
+    `  picture from another theme, which is where an unrelated backdrop comes`,
+    `  from.`,
+    ``,
+    `### Dividing the episode visually`,
+    ``,
+    `Each phrase is a *movement* of the episode, not a single scene. An episode`,
+    `about a rainy morning might declare "rain on window", "empty street morning",`,
+    `"coffee cup table", "city lights night" - and then several consecutive scenes`,
+    `share one of them while that part of the story lasts.`,
+    ``,
+    `Two scenes on the same phrase still get different photographs: the engine`,
+    `pulls a dozen candidates per phrase and hands each scene its own. So repeat a`,
+    `phrase freely across neighbouring scenes; what you must not do is put the`,
+    `whole episode on one phrase, which at this length reads as a broken video`,
+    `rather than as a stylistic choice.`,
     ``,
     `## Reference material`,
     ``,
@@ -295,7 +314,7 @@ export function buildStoryboardPrompt(input: PromptInput): string {
     `## Valid values`,
     ``,
     `- type: ${SCENE_TYPES.join(' | ')}`,
-    `- environment: ${backdrops.join(' | ') || '(none)'}`,
+    `- imageQuery: one of the ${MIN_IMAGE_QUERIES}-${MAX_IMAGE_QUERIES} phrases you declared in content.imageQueries`,
     `- animation: ${ANIMATIONS.join(' | ')}`,
     `- transition: ${TRANSITIONS.join(' | ')}`,
     `- effect: ${SCENE_EFFECTS.join(' | ')}`,
@@ -347,6 +366,12 @@ export function buildStoryboardPrompt(input: PromptInput): string {
         content: {
           summary: 'One or two sentences describing the episode, for show notes.',
           narration: '',
+          imageQueries: [
+            'empty street morning',
+            'rain on window',
+            'coffee cup table',
+            'city lights night',
+          ],
         },
         publish: {
           title: 'The hour before a city wakes up',
@@ -361,7 +386,7 @@ export function buildStoryboardPrompt(input: PromptInput): string {
           {
             id: 'scene-01',
             type: 'intro',
-            environment: backdrops[0] ?? 'backdrop-01.jpg',
+            imageQuery: 'rain on window',
             title: 'A quiet morning',
             narration:
               'Hello, and welcome back. The paragraph that gets read aloud - written, ' +

@@ -131,12 +131,21 @@ function clamp(value: number, min: number, max: number): number {
  * the storyboard beyond the words the voice actually produced. The podcast
  * module's builder does use it, which is why it is in the signature.
  */
+/**
+ * Note what this does *not* read: the scene.
+ *
+ * A single Vietnamese line paginated by measured word timings needs nothing
+ * from the scene it belongs to, which is why the parameter is typed loosely
+ * enough for another pipeline to reuse this - the cartoon module lays its
+ * subtitles out exactly this way, and a second copy would be a second copy to
+ * keep in step.
+ */
 export function buildCaptions(input: {
   words: readonly WordTiming[];
   sceneStartMs: number;
   durationInFrames: number;
   fps: number;
-  scene: Scene;
+  scene: Pick<Scene, 'id' | 'narration'>;
 }): CaptionPage[] {
   return paginate(input.words, input.sceneStartMs, input.durationInFrames, input.fps);
 }

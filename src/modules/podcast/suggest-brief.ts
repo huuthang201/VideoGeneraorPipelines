@@ -1,30 +1,33 @@
-import path from 'node:path';
 import { SuggestedBriefSchema, type SuggestedBrief } from '../../domain/brief';
-import type { ProductInfo } from '../../domain/project';
-import type { AvailableAssets } from './domain/storyboard';
 import type { AppConfig } from '../../config/env';
 import type { Logger } from '../../utils/logger';
 import { ERROR_CODES, PipelineError } from '../../domain/errors';
 import { exec } from '../../utils/exec';
 import { buildSuggestBriefPrompt } from './prompts/suggest-brief';
 import { extractJson } from '../../ai/claude-runner';
+import type { SuggestBriefInput } from '../contract';
 
 /**
- * A single, cheap Claude Code call that looks at the uploaded images and drafts
- * a starting "context" + "hook" for the UI's two text boxes. Deliberately much
- * lighter than storyboard generation (one attempt, no fact-guard, no retries
- * beyond what `exec` itself does) since a bad suggestion just gets edited or
- * discarded by the user rather than failing a job.
+ * A single, cheap Claude Code call that drafts a starting "context" + "hook"
+ * for the UI's two text boxes.
+ *
+ * It used to open every image in the library first, because the library was
+ * what an episode could be about. It no longer does, and the `Read` grant that
+ * went with it is gone: this is now text in, text out, steered by the project's
+ * name and by what the channel has already made.
+ *
+ * Deliberately much lighter than storyboard generation - one attempt, no
+ * fact-guard, no retries beyond what `exec` itself does - since a bad
+ * suggestion gets edited or discarded rather than failing a job.
  */
 const CLAUDE_TIMEOUT_MS = 180_000;
 
 export async function suggestBrief(
   config: AppConfig,
   logger: Logger,
-  input: { previewDir: string; assets: AvailableAssets; info: ProductInfo | null },
+  input: SuggestBriefInput,
 ): Promise<SuggestedBrief> {
   const prompt = buildSuggestBriefPrompt(input);
-  const previewDir = path.resolve(input.previewDir);
 
   const result = await exec(
     config.ai.claudeBin,
@@ -36,9 +39,7 @@ export async function suggestBrief(
       '--model',
       config.ai.model,
       '--allowedTools',
-      'Read',
-      '--add-dir',
-      previewDir,
+      '',
     ],
     { timeoutMs: CLAUDE_TIMEOUT_MS },
   ).catch((err) => {

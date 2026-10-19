@@ -5,7 +5,7 @@ import { baseSceneFields } from '../../../domain/scene';
  * Longest line a scene may hold, in characters.
  *
  * Roughly twelve seconds of Vietnamese speech, which is already a long time to
- * hold one photograph inside a forty-five second video. Past that the fix is to
+ * hold one photograph inside a thirty second video. Past that the fix is to
  * split the thought into two scenes rather than to hold the picture longer -
  * and a scene running a quarter of the whole video is usually a sign the script
  * has drifted into an explanation rather than a fact.

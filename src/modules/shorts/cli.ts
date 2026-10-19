@@ -26,7 +26,9 @@ export function registerShortsCommands(
       const logger = createLogger({ level: config.logLevel });
 
       await run(async () => {
-        const provider = new OpenverseProvider(config.stock.token, config.stock.sources);
+        const provider = new OpenverseProvider(config.stock.token, config.stock.sources, {
+          shareAlike: config.stock.allowShareAlike,
+        });
         const results = await provider.search({
           query,
           limit: opts.limit,

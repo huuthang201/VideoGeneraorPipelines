@@ -5,6 +5,8 @@ import { FONT_STACK } from '../fonts';
 import { safeAreaFor } from './SafeArea';
 
 export interface ImageCreditProps {
+  /** A permission credit: larger, full-strength, on a plate. */
+  prominent?: boolean;
   credit: TimelineImageCredit | null;
   theme: Theme;
 }
@@ -33,7 +35,7 @@ export interface ImageCreditProps {
  * notice would be read as a watermark, which is the one thing that makes a
  * short look like a repost.
  */
-export const ImageCredit: React.FC<ImageCreditProps> = ({ credit, theme }) => {
+export const ImageCredit: React.FC<ImageCreditProps> = ({ credit, theme, prominent = false }) => {
   const { width, height } = useVideoConfig();
   if (!credit) return null;
 
@@ -56,10 +58,24 @@ export const ImageCredit: React.FC<ImageCreditProps> = ({ credit, theme }) => {
       <div
         style={{
           fontFamily: FONT_STACK,
-          fontSize: unit * 0.019,
-          fontWeight: '400',
+          /*
+           * Larger, full-strength and on a plate when the photograph is used by
+           * permission. There the credit is not a licence footnote but the
+           * paper's condition for letting the picture be used at all, and the
+           * paper will look for it: small and dim - right for a CC credit that
+           * must not read as a watermark - is exactly what they would object to.
+           */
+          fontSize: unit * (prominent ? 0.026 : 0.019),
+          fontWeight: prominent ? '600' : '400',
           letterSpacing: '0.02em',
-          color: theme.colors.textMuted,
+          color: prominent ? theme.colors.text : theme.colors.textMuted,
+          ...(prominent
+            ? {
+                background: 'rgba(0,0,0,0.55)',
+                padding: `${unit * 0.006}px ${unit * 0.012}px`,
+                borderRadius: unit * 0.006,
+              }
+            : {}),
           // The same two-shadow treatment the subtitle uses, at a smaller
           // radius: type this size disappears entirely over a bright sky
           // without a rim to separate it.

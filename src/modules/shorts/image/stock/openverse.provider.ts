@@ -1,5 +1,6 @@
 import { ERROR_CODES, PipelineError } from '../../../../domain/errors';
 import type { StockImage, StockImageProvider, StockSearchOptions } from './types';
+import { withRetry } from '../../../../utils/retry';
 
 /**
  * Openverse - the openly-licensed image search run by WordPress.
@@ -54,6 +55,9 @@ const ENDPOINT = 'https://api.openverse.org/v1/images/';
  */
 const LICENSES = ['cc0', 'pdm', 'by'] as const;
 
+/** The same, plus ShareAlike, for a channel that has accepted it. See STOCK_SHARE_ALIKE. */
+const LICENSES_WITH_SHARE_ALIKE = [...LICENSES, 'by-sa'] as const;
+
 /**
  * Aspect ratio at or below which a photograph fills a vertical frame without
  * losing its subject.
@@ -70,6 +74,9 @@ const LICENSES = ['cc0', 'pdm', 'by'] as const;
  * something else.
  */
 const COMFORTABLE_ASPECT = 4 / 3;
+
+/** What `frameAspect` defaults to. Every caller was vertical until the podcast. */
+const DEFAULT_FRAME_ASPECT = 9 / 16;
 
 /**
  * Words that mean the result is a picture *of* a picture.
@@ -150,8 +157,32 @@ const MAX_SOURCE_EDGE = 8000;
  */
 const UNUSABLE_EXTENSIONS = /\.(tiff?|svg|gif)(\?|$)/iu;
 
-/** Bounded so a stalled search fails the job rather than parking the queue. */
-const TIMEOUT_MS = 20_000;
+/**
+ * Bounded so a stalled search fails the job rather than parking the queue.
+ *
+ * Forty-five seconds, up from twenty, and the number is measured rather than
+ * padded. Openverse is a free public API that goes cold: three requests for the
+ * same query, back to back, came in at **36.1s, 0.11s, 0.10s**. The first one
+ * is a cold start, and at twenty seconds it aborted and killed a whole run -
+ * one that had already paid for a script - with "This operation was aborted".
+ *
+ * The retry below is the real fix; this is what stops the first attempt from
+ * being thrown away for no reason.
+ */
+const TIMEOUT_MS = 45_000;
+
+/**
+ * Attempts at reaching the search, per request.
+ *
+ * Three, with backoff, which is what every other network call in this
+ * repository already had and this one did not. The failure it exists for is not
+ * a bug anywhere: a free API is briefly slow, and a run that has already spent
+ * a Claude call and is about to spend a render should not die of it.
+ *
+ * Only transport failures are retried. A 429 is not - the remedy there is
+ * waiting minutes, not seconds, and hammering it makes the wait longer.
+ */
+const SEARCH_ATTEMPTS = 3;
 
 /** Results per request. The anonymous ceiling is 20; a token raises it. */
 const MAX_PAGE_SIZE = { anonymous: 20, authenticated: 50 } as const;
@@ -190,13 +221,19 @@ export class OpenverseProvider implements StockImageProvider {
    *                everything, which is rarely what anyone wants - see
    *                STOCK_SOURCES for why.
    */
+  private readonly licences: readonly string[];
+
   constructor(
     private readonly token: string = '',
     private readonly sources: string = '',
-  ) {}
+    options: { shareAlike?: boolean } = {},
+  ) {
+    this.licences = options.shareAlike ? LICENSES_WITH_SHARE_ALIKE : LICENSES;
+  }
 
   async search(options: StockSearchOptions): Promise<StockImage[]> {
     const ceiling = this.token ? MAX_PAGE_SIZE.authenticated : MAX_PAGE_SIZE.anonymous;
+    const frameAspect = options.frameAspect ?? DEFAULT_FRAME_ASPECT;
 
     const params = new URLSearchParams({
       q: options.query,
@@ -204,7 +241,7 @@ export class OpenverseProvider implements StockImageProvider {
       // away and scenes sharing a query each need their own picture. Capped at
       // what this client is actually allowed to ask for - see MAX_PAGE_SIZE.
       page_size: String(Math.min(ceiling, Math.max(options.limit * 3, 20))),
-      license: LICENSES.join(','),
+      license: this.licences.join(','),
       size: 'large',
       mature: 'false',
       ...(this.sources ? { source: this.sources } : {}),
@@ -213,7 +250,7 @@ export class OpenverseProvider implements StockImageProvider {
     const response = await this.fetchJson(`${ENDPOINT}?${params.toString()}`, options.query);
 
     return response.results
-      .map((result) => toStockImage(result))
+      .map((result) => toStockImage(result, this.licences))
       .filter((image): image is StockImage => image !== null)
       .filter((image) => Math.min(image.width, image.height) >= options.minEdge)
       .filter((image) => Math.max(image.width, image.height) <= MAX_SOURCE_EDGE)
@@ -223,7 +260,7 @@ export class OpenverseProvider implements StockImageProvider {
        * Ranked, not just filtered, and in this order of priority:
        *
        *   1. does the picture actually show what was asked for
-       *   2. does it survive a crop into a vertical frame
+       *   2. does it survive a crop into *this video's* frame
        *
        * The first used to be missing entirely - the pool was sorted by aspect
        * alone, so a squarish photograph of the wrong thing outranked a wide one
@@ -238,7 +275,7 @@ export class OpenverseProvider implements StockImageProvider {
       .sort(
         (a, b) =>
           b.score - a.score ||
-          cropCost(a.image) - cropCost(b.image) ||
+          cropCost(a.image, frameAspect) - cropCost(b.image, frameAspect) ||
           // The API's own relevance order, preserved as the final tie-break.
           a.index - b.index,
       )
@@ -246,7 +283,20 @@ export class OpenverseProvider implements StockImageProvider {
       .slice(0, options.limit);
   }
 
-  private async fetchJson(url: string, query: string): Promise<OpenverseResponse> {
+  private fetchJson(url: string, query: string): Promise<OpenverseResponse> {
+    return withRetry(() => this.fetchOnce(url, query), {
+      attempts: SEARCH_ATTEMPTS,
+      // Longer than the usual second: a service answering 502 is a service
+      // under load, and coming straight back is what keeps it there.
+      initialDelayMs: 3000,
+      // A rate limit and a refusal both repeat; only "could not reach it" is
+      // worth another try.
+      shouldRetry: (err) =>
+        err instanceof PipelineError && err.code === ERROR_CODES.STOCK_SEARCH_UNREACHABLE,
+    });
+  }
+
+  private async fetchOnce(url: string, query: string): Promise<OpenverseResponse> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -263,7 +313,7 @@ export class OpenverseProvider implements StockImageProvider {
       });
     } catch (err) {
       throw new PipelineError(
-        ERROR_CODES.PROJECT_NOT_FOUND,
+        ERROR_CODES.STOCK_SEARCH_UNREACHABLE,
         'process-images',
         `Could not reach Openverse to search for "${query}": ` +
           `${err instanceof Error ? err.message : String(err)}`,
@@ -278,7 +328,7 @@ export class OpenverseProvider implements StockImageProvider {
     // around, and because the remedy is waiting rather than fixing anything.
     if (response.status === 429) {
       throw new PipelineError(
-        ERROR_CODES.PROJECT_NOT_FOUND,
+        ERROR_CODES.RATE_LIMITED,
         'process-images',
         'Openverse rate limit reached (anonymous access allows 20 searches a minute and 200 a ' +
           'day). Wait, or set OPENVERSE_TOKEN in .env to raise it.',
@@ -292,8 +342,24 @@ export class OpenverseProvider implements StockImageProvider {
       // this failure looks like a credentials problem on a client that
       // deliberately has no credentials.
       const detail = await response.text().catch(() => '');
+
+      /*
+       * A 5xx is the service having a bad day, and it is retried.
+       *
+       * This was the gap that made the retry added for cold starts nearly
+       * useless. A timeout arrives as a thrown fetch error and was retried; a
+       * 502 arrives as a perfectly good *response* and was not, so it went
+       * straight out as fatal. On a morning when Openverse was genuinely
+       * degraded - measured at eight 502s and four timeouts in twelve requests,
+       * zero successes - every run died on the first query.
+       *
+       * A 4xx is not retried: the request itself is wrong, and asking again
+       * wrongly is just slower.
+       */
       throw new PipelineError(
-        ERROR_CODES.PROJECT_NOT_FOUND,
+        response.status >= 500
+          ? ERROR_CODES.STOCK_SEARCH_UNREACHABLE
+          : ERROR_CODES.IMAGE_PROCESSING_FAILED,
         'process-images',
         `Openverse returned ${response.status} searching for "${query}"` +
           `${detail ? `: ${detail.slice(0, 200)}` : '.'}`,
@@ -350,19 +416,37 @@ function isArtwork(image: StockImage): boolean {
   return ARTWORK_WORDS.test(`${image.title} ${image.words}`);
 }
 
-/** 0 for a photograph that survives a vertical crop, 1 for one that does not. */
-function cropCost(image: StockImage): number {
-  return image.width / image.height <= COMFORTABLE_ASPECT ? 0 : 1;
+/**
+ * 0 for a photograph that survives the crop to this frame, 1 for one that does not.
+ *
+ * The rule reads the same in both directions and used to only run in one. A
+ * vertical frame wants a photograph no wider than 4:3, because a 3:2 landscape
+ * cropped to 9:16 keeps a third of its width and loses whatever the
+ * photographer put off-centre. A landscape frame wants the mirror of that: a
+ * portrait photograph cropped to 16:9 keeps a third of its *height*, and a
+ * portrait photograph *letterboxed* into 16:9 is a small picture with grey
+ * beside it - which is what an episode looked like the first time this module
+ * searched for its own backdrops.
+ */
+function cropCost(image: StockImage, frameAspect: number): number {
+  const aspect = image.width / image.height;
+  return frameAspect >= 1
+    ? aspect >= 1 / COMFORTABLE_ASPECT
+      ? 0
+      : 1
+    : aspect <= COMFORTABLE_ASPECT
+      ? 0
+      : 1;
 }
 
-function toStockImage(result: OpenverseResult): StockImage | null {
+function toStockImage(result: OpenverseResult, licences: readonly string[]): StockImage | null {
   const { id, url, width, height } = result;
   if (!id || !url || !width || !height) return null;
 
   const license = (result.license ?? '').toLowerCase();
-  // The API was asked for these three, but the filter is re-applied here rather
-  // than trusted: a licence this code has no rule for must never reach a render.
-  if (!LICENSES.includes(license as (typeof LICENSES)[number])) return null;
+  // The API was asked for these, but the filter is re-applied here rather than
+  // trusted: a licence this code has no rule for must never reach a render.
+  if (!licences.includes(license)) return null;
 
   return {
     id,

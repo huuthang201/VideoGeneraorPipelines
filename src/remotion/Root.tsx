@@ -1,5 +1,8 @@
 import { Composition } from 'remotion';
 import { ShortVideo } from './ShortVideo';
+import { Stage, type StagedCharacter } from './characters/Stage';
+import type { SceneryId } from './characters/scenery';
+import type { CharacterId } from './characters/palette';
 import { TimelineSchema, type Timeline } from '../domain/timeline';
 import { DEFAULT_VIDEO_CONFIG } from '../domain/config';
 import sampleTimeline from './sample-timeline.json';
@@ -19,6 +22,29 @@ import sampleTimeline from './sample-timeline.json';
  */
 export const RemotionRoot: React.FC = () => {
   return (
+    <>
+    {/*
+      The cartoon stage on its own, so it can be looked at before it is wired
+      into a timeline. Rendering a still from here proves the schema drives
+      pixels without touching the composition two live channels render through.
+    */}
+    <Composition
+      id="CartoonStage"
+      component={Stage}
+      width={1080}
+      height={1920}
+      fps={30}
+      durationInFrames={90}
+      defaultProps={{
+        background: 'san-vuon' as SceneryId,
+        speaker: 'meo-van' as CharacterId | null,
+        cast: [
+          { character: 'meo-van', position: 'trai', pose: 'ngoi', expression: 'nghi-ngo' },
+          { character: 'cho-dom', position: 'phai', pose: 'ngoi', expression: 'ngac-nhien' },
+        ] as StagedCharacter[],
+      }}
+    />
+
     <Composition
       id="ShortVideo"
       component={ShortVideo}
@@ -39,5 +65,6 @@ export const RemotionRoot: React.FC = () => {
         };
       }}
     />
+    </>
   );
 };

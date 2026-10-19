@@ -11,10 +11,21 @@ import { baseSceneFields } from '../../../domain/scene';
 export const MAX_NARRATION_CHARS = 700;
 
 /**
+ * Longest an image query may be.
+ *
+ * Short queries find photographs; long ones find nothing. A stock library is
+ * indexed on what is visibly *in* a picture, so "rain on a window" returns
+ * hundreds of results and "the quiet melancholy of a Hanoi afternoon" returns
+ * none - and a scene with no picture is a scene that has to borrow one.
+ */
+export const MAX_IMAGE_QUERY_CHARS = 60;
+
+/**
  * A podcast scene as authored by Claude.
  *
  * One backdrop, one title, one paragraph. The model's creative work is writing
- * the script and choosing which photograph belongs under which part of it.
+ * the script and describing - in words, before it has seen anything - what that
+ * part of it should be shot against.
  */
 export const SceneSchema = z.strictObject({
   ...baseSceneFields({
@@ -22,8 +33,18 @@ export const SceneSchema = z.strictObject({
     maxTitleChars: 60,
     maxDurationSec: 120,
   }),
-  /** Filename from the environment library. Every scene has a backdrop. */
-  environment: z.string().min(1),
+  /**
+   * Which of the storyboard's image queries this scene is shot against.
+   *
+   * A search phrase rather than a filename. This module used to name a file in
+   * an uploaded library, which meant an episode could only be about what
+   * somebody had already photographed - and meant the model had to *read* the
+   * library before it could write a word. Searching inverts that: the script
+   * comes first and the pictures are found for it.
+   *
+   * English, always. Every openly-licensed stock library is indexed in English.
+   */
+  imageQuery: z.string().min(1).max(MAX_IMAGE_QUERY_CHARS),
   /**
    * The same paragraph in Vietnamese, for the second subtitle line.
    *

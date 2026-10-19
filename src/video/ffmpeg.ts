@@ -45,6 +45,51 @@ async function resolveFfmpeg(): Promise<{ cmd: string; args: string[] }> {
  * about eight megabytes, and the MP3 is a tenth of that with no audible
  * difference under music and a subtitle.
  */
+/**
+ * Joins several spoken lines into one narration track.
+ *
+ * Re-encoded rather than stream-copied through the concat demuxer. A copy is
+ * faster and would work when every input came from the same synthesiser at the
+ * same settings - but these do not: four characters means four voices, and a
+ * VieNeu line and an Edge fallback line can differ in sample rate. Re-encoding
+ * costs a second and removes a whole class of "the audio goes silent after the
+ * third line" bug.
+ *
+ * The filter graph rather than a list file, because a list file needs the paths
+ * escaped and a Vietnamese project id is exactly the sort of path that breaks
+ * that escaping.
+ */
+export async function concatAudio(input: {
+  sources: string[];
+  outputPath: string;
+}): Promise<void> {
+  if (input.sources.length === 0) {
+    throw new PipelineError(
+      ERROR_CODES.TTS_GENERATION_FAILED,
+      'generate-tts',
+      'Nothing to concatenate: the script produced no spoken lines.',
+    );
+  }
+
+  const { cmd, args } = await resolveFfmpeg();
+  const inputs = input.sources.flatMap((src) => ['-i', src]);
+  const filter = `${input.sources.map((_, i) => `[${i}:a]`).join('')}concat=n=${input.sources.length}:v=0:a=1[out]`;
+
+  const result = await exec(
+    cmd,
+    [...args, '-y', ...inputs, '-filter_complex', filter, '-map', '[out]', '-q:a', '2', input.outputPath],
+    { timeoutMs: 180_000 },
+  );
+
+  if (result.code !== 0) {
+    throw new PipelineError(
+      ERROR_CODES.TTS_GENERATION_FAILED,
+      'generate-tts',
+      `ffmpeg could not join the dialogue lines: ${result.stderr.trim().slice(-400)}`,
+    );
+  }
+}
+
 export async function encodeVoice(input: {
   sourcePath: string;
   outputPath: string;

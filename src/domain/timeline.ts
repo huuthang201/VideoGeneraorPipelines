@@ -76,6 +76,12 @@ export const ImageCreditSchema = z.strictObject({
   label: z.string().min(1),
   creator: z.string().min(1),
   /**
+   * The library or the paper it came from. Optional because timelines written
+   * before press photographs existed do not have it, and the description only
+   * needs it for those - "Phạm Tuấn" alone does not say which paper allowed it.
+   */
+  provider: z.string().min(1).optional(),
+  /**
    * The rest of the attribution, carried so the publishing kit can be rebuilt
    * from the timeline alone. `publish-kit` re-runs long after the search
    * results are gone, and a written credit missing its licence URL is not a
@@ -99,8 +105,45 @@ export const TimelineBackgroundSchema = z.strictObject({
   fit: ImageFitSchema,
   /** Null only for a hand-authored timeline that names no source. */
   credit: ImageCreditSchema.nullable().default(null),
+  /**
+   * Show the photograph exactly as published: whole, still, unfiltered.
+   *
+   * Set by the timeline builder from the credit's licence rather than chosen by
+   * anybody, so the renderer never has to know what a licence is. See
+   * `PERMISSION_LICENCE`. Defaulted so every timeline written before this
+   * existed renders the way it always did.
+   */
+  preserve: z.boolean().default(false),
 });
 export type TimelineBackground = z.infer<typeof TimelineBackgroundSchema>;
+
+/**
+ * A drawn stage, for pipelines whose scenes have no photograph.
+ *
+ * Deliberately not a variant of `TimelineBackground`. A photo backdrop is a
+ * file with a size, a crop and a licence; a stage is a place and a cast, and
+ * squeezing one into the other would give both a pile of fields that are null
+ * half the time. A scene has one or the other, and the router picks the
+ * component that knows how to draw it - the same shape `CaptionRenderer`
+ * already uses, two components rather than one with conditionals.
+ */
+export const TimelineStageSchema = z.strictObject({
+  /** Which drawn backdrop. Resolved in the browser, so no path travels here. */
+  scenery: z.string().min(1),
+  cast: z
+    .array(
+      z.strictObject({
+        character: z.string().min(1),
+        position: z.enum(['trai', 'giua', 'phai']),
+        pose: z.string().min(1),
+        expression: z.string().min(1),
+      }),
+    )
+    .min(1),
+  /** Who is talking, so the mouth moves on the right character. */
+  speaker: z.string().min(1).nullable().default(null),
+});
+export type TimelineStage = z.infer<typeof TimelineStageSchema>;
 
 export const TimelineSceneSchema = z.strictObject({
   id: z.string().min(1),
@@ -110,7 +153,24 @@ export const TimelineSceneSchema = z.strictObject({
   durationInFrames: z.number().int().positive(),
   /** On-screen title for this beat. Empty is legal, and usual. */
   title: z.string(),
-  background: TimelineBackgroundSchema,
+  /**
+   * The photograph, for the pipelines that shoot against one.
+   *
+   * Nullable rather than absent so one timeline schema serves every pipeline;
+   * exactly one of `background` and `stage` is set, and `SceneRouter` reads
+   * which.
+   */
+  background: TimelineBackgroundSchema.nullable().default(null),
+  /** The drawn stage, for the pipelines that do not. */
+  stage: TimelineStageSchema.nullable().default(null),
+  /**
+   * A sound effect at the top of this scene, already resolved to a staged path.
+   *
+   * A path rather than the effect's id, for the same reason the backdrop is:
+   * the composition runs in a browser, which has no `assets/sfx` and no way to
+   * look one up. Everything Remotion needs has to arrive already resolved.
+   */
+  sfxSrc: z.string().min(1).nullable().default(null),
   /** Scene-local caption pages. Empty is legal (a scene may carry no narration). */
   captionPages: z.array(CaptionPageSchema),
   animation: AnimationNameSchema,

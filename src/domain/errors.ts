@@ -25,6 +25,25 @@ export const ERROR_CODES = {
 
   // images
   IMAGE_PROCESSING_FAILED: 'IMAGE_PROCESSING_FAILED',
+  /**
+   * The picture search could not be reached, or refused.
+   *
+   * Its own code because it is the one image failure that is nobody's fault and
+   * fixes itself: a free public API being slow or rate-limited. It used to be
+   * reported as `PROJECT_NOT_FOUND`, which is what a person reads in the UI
+   * when Openverse has a cold start - and sends them looking for a missing
+   * project that is sitting right there.
+   */
+  STOCK_SEARCH_UNREACHABLE: 'STOCK_SEARCH_UNREACHABLE',
+  /**
+   * The picture search refused because too much was asked of it.
+   *
+   * Separate from `STOCK_SEARCH_UNREACHABLE` because the remedy is different
+   * and the code is what a caller branches on: this one is not worth retrying
+   * in seconds - anonymous Openverse allows twenty searches a minute and two
+   * hundred a day, so the wait is minutes or tomorrow.
+   */
+  RATE_LIMITED: 'RATE_LIMITED',
 
   // render
   RENDER_FAILED: 'RENDER_FAILED',

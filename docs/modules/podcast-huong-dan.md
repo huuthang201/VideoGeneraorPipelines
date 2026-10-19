@@ -261,9 +261,11 @@ Trong mục **Video** của mỗi dự án có ba lựa chọn cho lúc dựng x
 | **Lên lịch** | tải lên và hẹn giờ công khai theo hàng đợi |
 
 Hàng đợi hoạt động như sau: hệ thống giữ một mốc `a`. Tập đầu tiên lên lịch sẽ
-đăng vào **a + 8 giờ**, rồi `a` nhảy tới đúng giờ đó. Tập sau lấy tiếp a + 8 giờ.
-Xếp 10 tập trong một buổi chiều thì chúng lần lượt lên sóng cách nhau 8 tiếng,
-chứ không đổ hết cùng lúc vào feed người theo dõi.
+đăng vào **a + 24 giờ**, rồi `a` nhảy tới đúng giờ đó. Tập sau lấy tiếp a + 24
+giờ. Xếp 10 tập trong một buổi chiều thì chúng lần lượt lên sóng mỗi ngày một
+tập, chứ không đổ hết cùng lúc vào feed người theo dõi.
+
+Khoảng cách đó là `SCHEDULE_INTERVAL_HOURS` trong `.env.podcast`, hiện đặt 24.
 
 Nếu `a` đã trôi vào quá khứ (mấy hôm không đăng gì) thì nó **được kéo về hiện
 tại** trước khi cộng — chứ không phải xả một loạt video ngay lập tức.

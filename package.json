@@ -14,6 +14,8 @@
     "podcast": "tsx src/cli/index.ts --module podcast",
     "fact": "tsx src/cli/index.ts --module fact",
     "psych": "tsx src/cli/index.ts --module psych",
+    "cartoon": "tsx src/cli/index.ts --module cartoon",
+    "factlong": "tsx src/cli/index.ts --module factlong",
     "ui": "tsx server/index.ts",
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:build": "vite build --config ui/vite.config.ts",

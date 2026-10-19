@@ -9,7 +9,6 @@ import { createPipelineRouter } from './routes/pipeline';
 import { createBatchRouter } from './routes/batch';
 import { createMediaRouter } from './routes/media';
 import { createEventsRouter } from './routes/events';
-import { createLibraryRouter } from './routes/library';
 import { peekSlot } from '../src/publish/schedule';
 
 // UI_PORT is the setting; PORT is honoured as a fallback so a supervisor that
@@ -49,8 +48,6 @@ for (const m of listModules()) {
   app.use(`/api/${m.id}/batch`, createBatchRouter(ctx));
   app.use(`/api/${m.id}/events`, createEventsRouter(ctx));
   app.use(`/media/${m.id}`, createMediaRouter(ctx));
-  // Podcast-only: the fact module has no library to manage.
-  if (m.id === 'podcast') app.use(`/api/${m.id}/library`, createLibraryRouter(ctx));
 }
 
 /**

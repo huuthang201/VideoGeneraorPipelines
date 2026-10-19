@@ -1,6 +1,6 @@
 import type { ProcessedImage } from '../domain/project';
-import type { CaptionPage, Timeline, TimelineScene } from '../domain/timeline';
-import { creditLine, type ImageCredit } from '../image/credit';
+import type { CaptionPage, Timeline, TimelineScene, TimelineStage } from '../domain/timeline';
+import { creditLine, mustPreserveOriginal, type ImageCredit } from '../image/credit';
 import type { ModuleId, Pacing } from '../domain/config';
 import type { SceneLike, StoryboardLike } from '../modules/contract';
 import type { WordTiming } from '../tts/types';
@@ -68,6 +68,19 @@ export interface BuildTimelineInput<S extends SceneLike> {
    * the only thing both modules can agree on.
    */
   backdrops: ReadonlyMap<string, SceneBackdrop>;
+  /**
+   * The drawn stage for each scene, for pipelines that photograph nothing.
+   *
+   * Supplied instead of `backdrops`, never as well. It lives here rather than
+   * in a second builder because everything else in this function - the
+   * alignment, the clamping, the tiling of scenes across measured audio, the
+   * caption pages - is identical whether the scene is a photograph or a
+   * drawing, and *the timeline is the only source of truth for timing*. A
+   * second copy of that arithmetic is a second copy that can drift.
+   */
+  stageFor?: (scene: S) => TimelineStage;
+  /** Staged path of this scene's sound effect, or null. */
+  sfxSrcFor?: (scene: S) => string | null;
   /** Path to voice.mp3 relative to the Remotion public dir, or null pre-TTS. */
   voiceSrc: string | null;
   /** Measured container length in seconds. 0 when there is no voice. */
@@ -152,14 +165,16 @@ export function buildTimeline<S extends SceneLike>(
     const from = cursor;
     cursor += durationInFrames;
 
-    const backdrop = backdrops.get(scene.id);
-    if (!backdrop) {
+    const stage = input.stageFor ? input.stageFor(scene) : null;
+
+    const backdrop = stage ? null : backdrops.get(scene.id);
+    if (!stage && !backdrop) {
       throw new Error(
         `Scene "${scene.id}" has no photograph. Every scene is resolved before the timeline is ` +
           `built, so this means the image stage and the storyboard disagree about scene ids.`,
       );
     }
-    const background = backdrop.image;
+    const background = backdrop?.image ?? null;
 
     const aligned = alignment?.scenes[index];
 
@@ -174,21 +189,35 @@ export function buildTimeline<S extends SceneLike>(
         ? estimateWordTimings(scene.narration, aligned.startMs, aligned.endMs)
         : (aligned?.words ?? []);
 
+    const preserveOriginal = Boolean(
+      backdrop?.credit && mustPreserveOriginal(backdrop.credit.license),
+    );
+
     return {
       id: scene.id,
       type: scene.type,
       from,
       durationInFrames,
       title: scene.title,
-      background: {
+      stage,
+      sfxSrc: input.sfxSrcFor?.(scene) ?? null,
+      background: background && {
         src: input.imageSrcFor(background),
         width: background.width,
         height: background.height,
-        fit: defaultFitFor(background.aspectRatio, frameAspect, input.coverTolerance),
-        credit: backdrop.credit
+        // Whole, never cropped, when the owner's permission is conditional on
+        // the photograph being shown as published. `contain` letterboxes onto
+        // the theme's plain background rather than onto a blurred copy of the
+        // photograph, which would itself be an edited version of their work.
+        fit: preserveOriginal
+          ? 'contain'
+          : defaultFitFor(background.aspectRatio, frameAspect, input.coverTolerance),
+        preserve: preserveOriginal,
+        credit: backdrop?.credit
           ? {
               label: creditLine(backdrop.credit),
               creator: backdrop.credit.creator,
+              provider: backdrop.credit.provider,
               license: backdrop.credit.license,
               licenseUrl: backdrop.credit.licenseUrl,
               sourceUrl: backdrop.credit.sourceUrl,
@@ -208,10 +237,19 @@ export function buildTimeline<S extends SceneLike>(
             scene,
           })
         : [],
-      animation: scene.animation,
+      /*
+       * A drawn stage has no camera and no atmosphere.
+       *
+       * Panning across a backdrop made of four shapes reveals that it is four
+       * shapes, and dust drifting over a cartoon reads as dirt on the lens. So
+       * these three are not "defaulted" for stage scenes - they are absent from
+       * the cartoon scene schema entirely, because the model should never have
+       * been offered them.
+       */
+      animation: stage ? 'none' : (scene.animation ?? 'none'),
       transition: scene.transition,
-      effect: scene.effect,
-      overlay: scene.overlay,
+      effect: stage ? 'none' : (scene.effect ?? 'none'),
+      overlay: stage ? 'none' : (scene.overlay ?? 'none'),
     };
   });
 

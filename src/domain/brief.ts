@@ -48,3 +48,36 @@ export const SuggestedBriefSchema = z.strictObject({
 });
 
 export type SuggestedBrief = z.infer<typeof SuggestedBriefSchema>;
+
+/**
+ * How many sources a prompt may name.
+ *
+ * Each one is a page the research call reads in full before it writes a word,
+ * inside a twelve-minute budget that also has to cover its own searching. Past
+ * about a dozen, the later sources are skimmed or skipped - so the cap is where
+ * naming another source stops adding anything.
+ */
+export const MAX_SOURCES = 12;
+
+/**
+ * Every http(s) link in a free-form prompt, in the order written, deduplicated.
+ *
+ * Trailing punctuation is trimmed because people paste links into sentences -
+ * "đọc bài này (https://example.com/bai-viet)." - and a URL ending in `).` is a
+ * page that does not exist.
+ */
+export function extractSources(text: string): string[] {
+  const found = text.match(/https?:\/\/[^\s<>"'`]+/giu) ?? [];
+  const cleaned = found.map((url) => url.replace(/[)\]}.,;:!?'"]+$/u, ''));
+
+  const valid = cleaned.filter((url) => {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  });
+
+  return [...new Set(valid)].slice(0, MAX_SOURCES);
+}

@@ -4,6 +4,7 @@ import type { ModuleContext } from '../lib/moduleContext';
 import { jobPaths, type AppConfig } from '../../src/config/env';
 import { runCli } from '../lib/processRunner';
 import { readProjectMeta } from '../lib/projectMeta';
+import { parseBriefWithSources } from '../lib/briefSources';
 
 /**
  * One router per module.
@@ -28,7 +29,7 @@ router.put<{ id: string }>('/', async (req, res) => {
    */
   let brief: unknown;
   try {
-    brief = module.parseBrief(req.body);
+    brief = parseBriefWithSources(module, (req.body ?? {}) as Record<string, unknown>);
   } catch {
     return res.status(400).json({ error: 'Dữ liệu bối cảnh/hook không hợp lệ' });
   }
